@@ -19,19 +19,48 @@ KIND_COLOR = {
     DeviceKind.ADAPTER: 3,
 }
 
-# Approximate distance labels for ring boundaries
-RING_DEFS = (
-    (0.33, "3m"),
-    (0.66, "10m"),
-    (1.0, "30m"),
-)
+# Scale presets: (max_distance_m, [(fraction, label), ...])
+SCALE_PRESETS = [
+    (10, [(0.33, "1m"), (0.66, "5m"), (1.0, "10m")]),
+    (30, [(0.33, "3m"), (0.66, "10m"), (1.0, "30m")]),
+    (100, [(0.25, "5m"), (0.5, "20m"), (0.75, "50m"), (1.0, "100m")]),
+    (300, [(0.25, "10m"), (0.5, "50m"), (0.75, "150m"), (1.0, "300m")]),
+]
 
 ASPECT = 0.48  # terminal character aspect ratio (height/width)
 
 
-def rssi_to_radius(rssi: float, max_radius: float) -> float:
+def _pick_scale(devices: list[WifiDevice]) -> tuple[list[tuple[float, str]], float, float]:
+    """Choose ring scale based on farthest device distance.
+
+    Returns (ring_defs, min_rssi, max_rssi) where ring_defs are
+    (fraction, label) tuples and the RSSI range maps to the chosen scale.
+    """
+    if not devices:
+        return SCALE_PRESETS[1][1], -95.0, -25.0
+
+    max_dist = max(d.distance_m() for d in devices)
+
+    for threshold, rings in SCALE_PRESETS:
+        if max_dist <= threshold * 1.1:
+            # Map RSSI range to this scale's max distance
+            # Closer max_rssi for tighter scales
+            if threshold <= 10:
+                return rings, -70.0, -25.0
+            elif threshold <= 30:
+                return rings, -85.0, -25.0
+            elif threshold <= 100:
+                return rings, -95.0, -25.0
+            else:
+                return rings, -100.0, -25.0
+
+    # Default to largest scale
+    return SCALE_PRESETS[-1][1], -100.0, -25.0
+
+
+def rssi_to_radius(rssi: float, max_radius: float,
+                   min_rssi: float = -95.0, max_rssi: float = -25.0) -> float:
     """Map RSSI to distance from center (stronger = closer)."""
-    min_rssi, max_rssi = -95.0, -25.0
     clamped = max(min_rssi, min(max_rssi, rssi))
     t = (clamped - min_rssi) / (max_rssi - min_rssi)
     return max_radius * (1.0 - t)
@@ -115,8 +144,11 @@ def draw_radar(
     # Draw crosshair (faint reference grid)
     _draw_crosshair(stdscr, cx, cy, max_r, max_y, max_x)
 
+    # Auto-scale rings based on device distances
+    ring_defs, scale_min_rssi, scale_max_rssi = _pick_scale(devices)
+
     # Draw range rings
-    for ring_frac, label in RING_DEFS:
+    for ring_frac, label in ring_defs:
         ring = int(max_r * ring_frac)
         _draw_ring(stdscr, cx, cy, ring, max_y, max_x, "\u2219", curses.A_DIM)
         # Place label at 45-degree angle (top-right) to avoid overlap
@@ -167,7 +199,7 @@ def draw_radar(
     for dev in devices[:40]:
         bearing = (dev.display_bearing() - heading) % 360.0
         rad = math.radians(bearing - 90)
-        dist = rssi_to_radius(dev.rssi_dbm, max_r)
+        dist = rssi_to_radius(dev.rssi_dbm, max_r, scale_min_rssi, scale_max_rssi)
         x = int(cx + dist * math.cos(rad))
         y = int(cy + dist * math.sin(rad) * ASPECT)
         if not (0 < y < max_y - panel_h and 1 < x < max_x - 2):
@@ -195,7 +227,7 @@ def draw_radar(
     try:
         legend = (
             " \u25c9 AP  \u25ce client  \u25cb probe    "
-            "rings: ~3m ~10m ~30m    N/E/S/W = compass"
+            f"rings: {' '.join('~' + r[1] for r in ring_defs)}    N/E/S/W = compass"
         )
         stdscr.addstr(panel_y + 1, 1, legend[: max_x - 3], curses.A_DIM)
     except curses.error:
