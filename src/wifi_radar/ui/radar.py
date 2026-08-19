@@ -50,8 +50,10 @@ def draw_radar(
     cx, cy = max_x // 2, (max_y - 6) // 2 + 1
     max_r = max(4, min(cx - 4, cy - 2, 20))
 
-    # Draw range rings
-    for ring_frac, _label in ((1.0, "far"), (0.66, ""), (0.33, "near")):
+    # Distance scale: rings map RSSI to approximate metres
+    # Inner ring ≈ 3m (-35 dBm), middle ≈ 10m (-60 dBm), outer ≈ 30m+ (-85 dBm)
+    ring_labels = ((0.33, "~3m"), (0.66, "~10m"), (1.0, "~30m"))
+    for ring_frac, label in ring_labels:
         ring = int(max_r * ring_frac)
         for deg in range(0, 360, 6):
             rad = math.radians(deg - 90)
@@ -62,6 +64,27 @@ def draw_radar(
                     stdscr.addstr(y, x, ".", curses.A_DIM)
                 except curses.error:
                     pass
+        # Label each ring on the right side
+        lx = cx + ring + 1
+        ly = cy
+        if 0 < ly < max_y - 1 and lx + len(label) < max_x - 1:
+            try:
+                stdscr.addstr(ly, lx, label, curses.A_DIM)
+            except curses.error:
+                pass
+
+    # Compass bearing markers (relative to heading)
+    compass = ((0, "N"), (90, "E"), (180, "S"), (270, "W"))
+    for deg, lbl in compass:
+        rel = (deg - heading) % 360.0
+        rad = math.radians(rel - 90)
+        x = int(cx + (max_r + 2) * math.cos(rad))
+        y = int(cy + (max_r + 2) * math.sin(rad) * 0.5)
+        if 0 < y < max_y - 1 and 0 < x < max_x - 1:
+            try:
+                stdscr.addstr(y, x, lbl, curses.A_BOLD)
+            except curses.error:
+                pass
 
     # Sweep line (heading direction)
     sweep = math.radians(heading - 90)
@@ -102,20 +125,31 @@ def draw_radar(
         except curses.error:
             pass
 
-    # Legend and status
-    leg_y = max_y - 5
+    # Legend and status panel
+    leg_y = max_y - 6
     try:
         stdscr.addstr(leg_y, 2, "\u25c9 AP   \u25ce client   \u25cb probe-only", curses.A_DIM)
+        stdscr.addstr(
+            leg_y, 38,
+            "Rings: ~3m / ~10m / ~30m   Bearing: N/E/S/W",
+            curses.A_DIM,
+        )
+    except curses.error:
+        pass
+    try:
         stdscr.addstr(leg_y + 1, 2, status[: max_x - 4], curses.A_DIM)
+    except curses.error:
+        pass
+    try:
         stdscr.addstr(
             leg_y + 2, 2,
-            "[q]uit [r]escan [m]onitor [c]alib [\u2190\u2192]heading [\u2191\u2193]select",
+            "[q]uit [r]escan [m]onitor [c]alib [\u2190\u2192]head [\u2191\u2193]sel [Ent]desel",
             curses.A_DIM,
         )
     except curses.error:
         pass
 
-    # Detail line for selected device
+    # Device detail (always visible when selected)
     if selected_mac:
         sel = next((d for d in devices if d.mac == selected_mac), None)
         if sel:
@@ -125,15 +159,21 @@ def draw_radar(
                 else "uncal"
             )
             detail = (
-                f"{sel.label}  {sel.mac}  {sel.kind.value}  ch{sel.channel or '?'}  "
+                f"\u2192 {sel.label}  {sel.mac}  {sel.kind.value}  ch{sel.channel or '?'}  "
                 f"{sel.rssi_dbm:.0f}dBm  ~{sel.distance_m():.1f}m  "
-                f"{sel.display_bearing():.0f}\u00b0({conf})"
+                f"bearing {sel.display_bearing():.0f}\u00b0({conf})"
             )
             if sel.vendor:
-                detail += f"  {sel.vendor}"
+                detail += f"  [{sel.vendor}]"
             try:
                 stdscr.addstr(leg_y + 3, 2, detail[: max_x - 4], curses.A_BOLD)
             except curses.error:
                 pass
+    # Device count
+    try:
+        count_str = f"{len(devices)} device(s) visible"
+        stdscr.addstr(leg_y + 4, 2, count_str, curses.A_DIM)
+    except curses.error:
+        pass
 
     stdscr.refresh()
