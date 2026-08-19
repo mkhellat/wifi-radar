@@ -11,6 +11,7 @@ def list_wireless_ifaces() -> list[str]:
     """Return wireless interface names via `iw dev`."""
     proc = subprocess.run(
         ["iw", "dev"],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         timeout=5,
@@ -42,18 +43,21 @@ class MonitorSession:
         if iface_exists(self.mon_iface):
             subprocess.run(
                 ["ip", "link", "set", self.mon_iface, "up"],
+                stdin=subprocess.DEVNULL,
                 capture_output=True, timeout=5,
             )
             return True
         proc = subprocess.run(
             ["iw", "dev", self.phy_iface, "interface", "add",
              self.mon_iface, "type", "monitor"],
+            stdin=subprocess.DEVNULL,
             capture_output=True, timeout=5,
         )
         if proc.returncode != 0:
             return False
         subprocess.run(
             ["ip", "link", "set", self.mon_iface, "up"],
+            stdin=subprocess.DEVNULL,
             capture_output=True, timeout=5,
         )
         return True
@@ -63,5 +67,6 @@ class MonitorSession:
         if iface_exists(self.mon_iface):
             subprocess.run(
                 ["iw", "dev", self.mon_iface, "del"],
+                stdin=subprocess.DEVNULL,
                 capture_output=True, timeout=5,
             )

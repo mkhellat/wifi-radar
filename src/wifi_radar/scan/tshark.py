@@ -50,6 +50,7 @@ def run_tshark_probes(mon_iface: str, seconds: float = 2.0) -> list[WifiDevice]:
             "-e", "wlan.ssid",
             "-e", "radiotap.dbm_antsignal",
         ],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         timeout=seconds + 10,

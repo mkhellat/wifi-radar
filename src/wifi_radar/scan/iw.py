@@ -105,6 +105,7 @@ def run_iw_scan(iface: str, timeout: float = 30.0) -> list[WifiDevice]:
     """Execute `iw dev <iface> scan` and parse results."""
     proc = subprocess.run(
         ["iw", "dev", iface, "scan"],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -112,6 +113,7 @@ def run_iw_scan(iface: str, timeout: float = 30.0) -> list[WifiDevice]:
     if proc.returncode != 0:
         proc2 = subprocess.run(
             ["iw", "dev", iface, "scan", "dump"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=timeout,

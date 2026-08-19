@@ -117,6 +117,7 @@ class ScanWorker:
                 "--output-format", "csv",
                 "--write-interval", "1",
             ],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
