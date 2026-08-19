@@ -78,17 +78,23 @@ wifi-radar --fetch-oui
 wifi-radar --version
 ```
 
-## Keys
+## Keys (vi-style)
 
 | Key | Action |
 |-----|--------|
-| `q` / `Esc` | Quit |
+| `q` | Quit |
+| `h` / `←` | Rotate heading left (5°) |
+| `l` / `→` | Rotate heading right (5°) |
+| `H` / `L` | Rotate heading fast (15°) |
+| `j` / `↓` | Select next device |
+| `k` / `↑` | Select previous device |
+| `g` / `G` | Jump to first / last device |
 | `r` | Force rescan |
-| `m` | Toggle monitor-mode sampling |
+| `m` | Toggle monitor mode |
 | `c` | Start/stop bearing calibration |
-| `←` `→` | Rotate heading (plot rotates with you) |
-| `↑` `↓` | Select device in list |
-| `Enter` | Show detail for selected device |
+| `Esc` | Deselect |
+| `?` | Full-screen help overlay |
+| `:` | Enter command mode (`:q` `:r` `:m` `:c` `:help`) |
 
 ## Distance & direction
 
