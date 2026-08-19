@@ -64,7 +64,7 @@ help: ## Show this help
 # VIRTUAL ENVIRONMENT
 # ============================================================================
 
-$(VENV_STAMP): pyproject.toml
+$(VENV_STAMP): pyproject.toml configure config.mk
 	@printf '>>> Creating virtual environment in %s ...\n' '$(VENV_DIR)'
 	$(PYTHON) -m venv $(VENV_DIR)
 	$(VENV_PIP) install --upgrade pip setuptools wheel >/dev/null
@@ -77,7 +77,7 @@ venv: $(VENV_STAMP) ## Create virtual environment
 # INSTALL
 # ============================================================================
 
-$(INSTALL_STAMP): $(VENV_STAMP) pyproject.toml
+$(INSTALL_STAMP): $(VENV_STAMP) pyproject.toml src/wifi_radar/__init__.py
 	@printf '>>> Installing wifi-radar in editable mode with [dev] deps ...\n'
 	$(VENV_PIP) install -e ".[dev]" >/dev/null
 	@if [ -n "$(INSTALL_EXTRAS)" ]; then \
