@@ -62,6 +62,7 @@ def run_app(iface: str, use_monitor: bool) -> int:
         nonlocal heading, selected_mac
 
         curses.curs_set(0)
+        stdscr.keypad(True)
         stdscr.nodelay(True)
         stdscr.timeout(200)
         if curses.has_colors():
@@ -133,12 +134,8 @@ def run_app(iface: str, use_monitor: bool) -> int:
                         idx = min(len(devices) - 1, idx + 1)
                         selected_mac = devices[idx].mac
             if key in (10, 13) and selected_mac:
-                sel = next((d for d in devices if d.mac == selected_mac), None)
-                if sel:
-                    worker.status = (
-                        f"{sel.mac} {sel.kind.value} ~{sel.distance_m():.1f}m "
-                        f"@{sel.display_bearing():.0f}\u00b0 RSSI {sel.rssi_dbm:.0f}"
-                    )
+                # Enter deselects (toggle)
+                selected_mac = None
 
     try:
         curses.wrapper(curses_main)
