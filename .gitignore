@@ -19,3 +19,5 @@ config.mk
 .claude/settings.local.json
 CLAUDE.md
 CLAUDE.md
+CLAUDE.md
+.cursor/
