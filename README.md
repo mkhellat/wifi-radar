@@ -33,16 +33,27 @@ Root (`sudo`) is needed for monitor-mode features.
 
 Python 3.11 or later (stdlib only — no pip dependencies at runtime).
 
-## Install
+## Quick start
+
+```bash
+git clone https://github.com/mkhellat/wifi-radar.git
+cd wifi-radar
+./configure          # detect Python, system tools, write config.mk
+make                 # create .venv, install package + dev deps
+make check           # lint + type-check + test
+sudo .venv/bin/wifi-radar
+```
+
+Run `./configure --help` for options and `make help` for all targets.
+
+## Install (pip)
 
 ```bash
 # From PyPI (when published)
 pip install wifi-radar
 
-# From source
-git clone https://github.com/mkhellat/wifi-radar.git
-cd wifi-radar
-pip install -e .
+# Editable install (without the build system)
+pip install -e ".[dev]"
 ```
 
 ## Usage
@@ -104,10 +115,13 @@ src/wifi_radar/
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest
-ruff check src/ tests/
-mypy
+./configure --with-docs   # include Sphinx deps
+make                      # venv + editable install + [dev] + [docs]
+make check                # ruff + mypy + pytest
+make docs                 # build HTML docs in docs/_build/html/
+make format               # auto-format with ruff
+make clean                # remove venv and caches
+make distclean            # also remove config.mk
 ```
 
 ## Mirrors
