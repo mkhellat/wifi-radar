@@ -66,6 +66,81 @@ COMMANDS: dict[str, str] = {
 }
 
 
+HELP_TEXT = """\
+┌─────────────────────────────────────────────────────────────┐
+│                    wifi-radar help                           │
+├─────────────────────────────────────────────────────────────┤
+│  NAVIGATION                                                 │
+│    h / ←        Rotate heading left (5°)                    │
+│    l / →        Rotate heading right (5°)                   │
+│    H            Rotate heading left fast (15°)              │
+│    L            Rotate heading right fast (15°)             │
+│    j / ↓        Select next device (weaker signal)          │
+│    k / ↑        Select previous device (stronger signal)    │
+│    g            Jump to first device (strongest)            │
+│    G            Jump to last device (weakest)               │
+│    Esc          Deselect current device                     │
+│                                                             │
+│  ACTIONS                                                    │
+│    q            Quit                                        │
+│    r            Force immediate rescan                      │
+│    m            Toggle monitor mode on/off                  │
+│    c            Start/stop bearing calibration              │
+│    ?            Show this help screen                       │
+│                                                             │
+│  COMMAND MODE (vi-style)                                    │
+│    :            Enter command mode                          │
+│    :q :quit     Quit                                        │
+│    :r :rescan   Force rescan                                │
+│    :m :monitor  Toggle monitor                              │
+│    :c :calib    Toggle calibration                          │
+│    :h :help     Show help                                   │
+│    Esc          Cancel command                              │
+│                                                             │
+│  DISPLAY                                                    │
+│    ◉ (red)      Access point / hotspot                      │
+│    ◎ (green)    Associated client station                   │
+│    ○ (yellow)   Probe-only adapter (searching)              │
+│    ───          Crosshair reference grid                    │
+│    ∙ rings      Distance: inner ~3m, mid ~10m, outer ~30m   │
+│    N/E/S/W      Compass bearings (rotate with heading)      │
+│    ▲            Sweep line (your forward direction)          │
+│                                                             │
+│  CALIBRATION                                                │
+│    Press 'c' to start. Slowly rotate your laptop.           │
+│    Use h/l to set heading as you turn. After ~25s or        │
+│    press 'c' again, calibration ends and devices are        │
+│    placed at their peak-signal bearing.                     │
+│                                                             │
+├─────────────────────────────────────────────────────────────┤
+│           Press any key to return to radar                  │
+└─────────────────────────────────────────────────────────────┘"""
+
+
+def _show_help(stdscr: curses.window) -> None:
+    """Display full-screen help overlay."""
+    stdscr.erase()
+    max_y, max_x = stdscr.getmaxyx()
+    lines = HELP_TEXT.split("\n")
+    start_y = max(0, (max_y - len(lines)) // 2)
+    for i, line in enumerate(lines):
+        y = start_y + i
+        if y >= max_y - 1:
+            break
+        x = max(0, (max_x - len(line)) // 2)
+        try:
+            stdscr.addstr(y, x, line[: max_x - 1], curses.A_BOLD)
+        except curses.error:
+            pass
+    stdscr.refresh()
+    stdscr.timeout(-1)  # block until keypress
+    try:
+        stdscr.get_wch()
+    except curses.error:
+        pass
+    stdscr.timeout(200)  # restore normal timeout
+
+
 def run_app(iface: str, use_monitor: bool) -> int:
     """Main curses application. Returns exit code."""
     store = DeviceStore()
@@ -146,10 +221,7 @@ def run_app(iface: str, use_monitor: bool) -> int:
                             calibrator.start()
                             worker.status = "CALIBRATING: rotate slowly, h/l to turn"
                     elif action == "help":
-                        worker.status = (
-                            "Normal: h/l=hdg j/k=sel q=quit | "
-                            "Cmd(:): q r m c help"
-                        )
+                        _show_help(stdscr)
                     else:
                         worker.status = f"Unknown command: {cmd}"
                 elif key_int in (curses.KEY_BACKSPACE, 127, 8):
@@ -238,10 +310,7 @@ def run_app(iface: str, use_monitor: bool) -> int:
 
             # Show help
             elif key_int == ord("?"):
-                worker.status = (
-                    "h/l=hdg H/L=fast j/k=sel g/G=top/bot "
-                    "q=quit r=rescan m=mon c=cal :=cmd ?=help"
-                )
+                _show_help(stdscr)
 
     try:
         curses.wrapper(curses_main)
