@@ -31,6 +31,12 @@ VENV_SPHINX   := $(VENV_BIN)/sphinx-build
 VENV_STAMP    := $(VENV_DIR)/.stamp
 INSTALL_STAMP := $(VENV_DIR)/.installed
 
+# Source inputs that should invalidate the editable install stamp
+PKG_SOURCES   := $(wildcard src/wifi_radar/*.py src/wifi_radar/*/*.py)
+TEST_SOURCES  := $(wildcard tests/*.py)
+DOC_SOURCES   := $(wildcard docs/*.rst docs/*/*.rst)
+BUILD_INPUTS  := Makefile pyproject.toml README.md $(PKG_SOURCES) $(TEST_SOURCES) $(DOC_SOURCES)
+
 # ============================================================================
 # DEFAULT TARGET
 # ============================================================================
@@ -77,7 +83,7 @@ venv: $(VENV_STAMP) ## Create virtual environment
 # INSTALL
 # ============================================================================
 
-$(INSTALL_STAMP): $(VENV_STAMP) pyproject.toml src/wifi_radar/__init__.py
+$(INSTALL_STAMP): $(VENV_STAMP) $(BUILD_INPUTS)
 	@printf '>>> Installing wifi-radar in editable mode with [dev] deps ...\n'
 	$(VENV_PIP) install -e ".[dev]" >/dev/null
 	@if [ -n "$(INSTALL_EXTRAS)" ]; then \
