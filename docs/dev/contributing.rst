@@ -8,23 +8,24 @@ Development Setup
 
    git clone https://github.com/mkhellat/wifi-radar.git
    cd wifi-radar
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -e ".[dev]"
+   ./configure --with-docs
+   make
+
+This project uses the classic ``./configure && make`` workflow. The committed
+``Makefile.in`` template is converted into a machine-specific ``Makefile`` by
+``./configure``.
 
 Running Checks
 --------------
 
 .. code-block:: bash
 
-   # Lint
-   ruff check src/ tests/
+   make check
 
-   # Type check (strict mode)
-   mypy
-
-   # Tests
-   pytest -v
+   # or individual checks
+   make lint
+   make typecheck
+   make test
 
 All three must pass before submitting changes. CI runs these on Python
 3.11, 3.12, and 3.13.
@@ -33,7 +34,7 @@ Code Style
 ----------
 
 - **Line length**: 100 characters
-- **Formatting**: follow ruff defaults (``ruff format`` if needed)
+- **Formatting**: follow ruff defaults (``make format`` if needed)
 - **Imports**: sorted by ruff (isort-compatible)
 - **Type annotations**: all public functions must have complete type hints
   (enforced by mypy strict mode)

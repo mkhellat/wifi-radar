@@ -38,11 +38,14 @@ Python 3.11 or later (stdlib only — no pip dependencies at runtime).
 ```bash
 git clone https://github.com/mkhellat/wifi-radar.git
 cd wifi-radar
-./configure          # detect Python, system tools, write config.mk
+./configure          # detect platform, generate Makefile from Makefile.in
 make                 # create .venv, install package + dev deps
 make check           # lint + type-check + test
 sudo .venv/bin/wifi-radar
 ```
+
+`Makefile.in` is the committed template. `./configure` generates the
+machine-specific `Makefile`, following the traditional GNU/FOSS workflow.
 
 Run `./configure --help` for options and `make help` for all targets.
 
@@ -121,7 +124,7 @@ make check                # ruff + mypy + pytest
 make docs                 # build HTML docs in docs/_build/html/
 make format               # auto-format with ruff
 make clean                # remove venv and caches
-make distclean            # also remove config.mk
+make distclean            # also remove generated Makefile
 ```
 
 ## Mirrors

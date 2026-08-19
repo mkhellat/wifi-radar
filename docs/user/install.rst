@@ -60,13 +60,17 @@ Install wifi-radar
 
    git clone https://github.com/mkhellat/wifi-radar.git
    cd wifi-radar
-   pip install -e ".[dev]"
+   ./configure
+   make
+
+This follows the traditional GNU/FOSS workflow: ``./configure`` detects the
+platform and generates ``Makefile`` from the committed ``Makefile.in`` template.
 
 **Verify installation**:
 
 .. code-block:: bash
 
-   wifi-radar --version
+   .venv/bin/wifi-radar --version
 
 OUI Vendor Database
 -------------------
@@ -75,7 +79,7 @@ For vendor name display, download the IEEE OUI database:
 
 .. code-block:: bash
 
-   wifi-radar --fetch-oui
+   .venv/bin/wifi-radar --fetch-oui
 
 This downloads ``oui.csv`` from IEEE and caches it at
 ``~/.cache/wifi_radar/oui.txt``. Run periodically to update.
