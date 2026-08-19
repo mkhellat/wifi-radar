@@ -66,79 +66,118 @@ COMMANDS: dict[str, str] = {
 }
 
 
-HELP_TEXT = """\
-┌─────────────────────────────────────────────────────────────┐
-│                    wifi-radar help                           │
-├─────────────────────────────────────────────────────────────┤
-│  NAVIGATION                                                 │
-│    h / ←        Rotate heading left (5°)                    │
-│    l / →        Rotate heading right (5°)                   │
-│    H            Rotate heading left fast (15°)              │
-│    L            Rotate heading right fast (15°)             │
-│    j / ↓        Select next device (weaker signal)          │
-│    k / ↑        Select previous device (stronger signal)    │
-│    g            Jump to first device (strongest)            │
-│    G            Jump to last device (weakest)               │
-│    Esc          Deselect current device                     │
-│                                                             │
-│  ACTIONS                                                    │
-│    q            Quit                                        │
-│    r            Force immediate rescan                      │
-│    m            Toggle monitor mode on/off                  │
-│    c            Start/stop bearing calibration              │
-│    ?            Show this help screen                       │
-│                                                             │
-│  COMMAND MODE (vi-style)                                    │
-│    :            Enter command mode                          │
-│    :q :quit     Quit                                        │
-│    :r :rescan   Force rescan                                │
-│    :m :monitor  Toggle monitor                              │
-│    :c :calib    Toggle calibration                          │
-│    :h :help     Show help                                   │
-│    Esc          Cancel command                              │
-│                                                             │
-│  DISPLAY                                                    │
-│    ◉ (red)      Access point / hotspot                      │
-│    ◎ (green)    Associated client station                   │
-│    ○ (yellow)   Probe-only adapter (searching)              │
-│    ───          Crosshair reference grid                    │
-│    ∙ rings      Distance: inner ~3m, mid ~10m, outer ~30m   │
-│    N/E/S/W      Compass bearings (rotate with heading)      │
-│    ▲            Sweep line (your forward direction)          │
-│                                                             │
-│  CALIBRATION                                                │
-│    Press 'c' to start. Slowly rotate your laptop.           │
-│    Use h/l to set heading as you turn. After ~25s or        │
-│    press 'c' again, calibration ends and devices are        │
-│    placed at their peak-signal bearing.                     │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│           Press any key to return to radar                  │
-└─────────────────────────────────────────────────────────────┘"""
+HELP_LINES = [
+    "wifi-radar help",
+    "",
+    "NAVIGATION",
+    "  h / Left      Rotate heading left (5 deg)",
+    "  l / Right     Rotate heading right (5 deg)",
+    "  H             Rotate heading left fast (15 deg)",
+    "  L             Rotate heading right fast (15 deg)",
+    "  j / Down      Select next device (weaker signal)",
+    "  k / Up        Select previous device (stronger signal)",
+    "  g             Jump to first device (strongest)",
+    "  G             Jump to last device (weakest)",
+    "  Esc           Deselect current device",
+    "",
+    "ACTIONS",
+    "  q             Quit",
+    "  r             Force immediate rescan",
+    "  m             Toggle monitor mode on/off",
+    "  c             Start/stop bearing calibration",
+    "  ?             Show this help screen",
+    "",
+    "COMMAND MODE (vi-style)",
+    "  :             Enter command mode",
+    "  :q :quit      Quit",
+    "  :r :rescan    Force rescan",
+    "  :m :monitor   Toggle monitor",
+    "  :c :calib     Toggle calibration",
+    "  :h :help      Show help",
+    "  Esc           Cancel command",
+    "",
+    "DISPLAY LEGEND",
+    "  * (red)       Access point / hotspot",
+    "  o (green)     Associated client station",
+    "  . (yellow)    Probe-only adapter (searching)",
+    "  --- rings     Distance: inner ~3m, mid ~10m, outer ~30m",
+    "  N/E/S/W       Compass bearings (rotate with heading)",
+    "  ^ sweep       Your forward direction",
+    "",
+    "CALIBRATION",
+    "  Press c to start. Slowly rotate your laptop.",
+    "  Use h/l to set heading as you turn. After ~25s",
+    "  or press c again, calibration ends and devices",
+    "  are placed at their peak-signal bearing.",
+    "",
+    "Press any key to return to radar",
+]
 
 
 def _show_help(stdscr: curses.window) -> None:
-    """Display full-screen help overlay."""
+    """Display full-screen help overlay with dynamic box."""
     stdscr.erase()
     max_y, max_x = stdscr.getmaxyx()
-    lines = HELP_TEXT.split("\n")
-    start_y = max(0, (max_y - len(lines)) // 2)
-    for i, line in enumerate(lines):
-        y = start_y + i
+
+    # Compute box dimensions
+    content_w = max(len(line) for line in HELP_LINES)
+    box_w = min(content_w + 4, max_x - 2)  # 2 border + 2 padding
+    box_h = min(len(HELP_LINES) + 2, max_y - 1)  # 2 border
+    inner_w = box_w - 4
+    x0 = max(0, (max_x - box_w) // 2)
+    y0 = max(0, (max_y - box_h) // 2)
+
+    # Draw box
+    top = "\u250c" + "\u2500" * (box_w - 2) + "\u2510"
+    bot = "\u2514" + "\u2500" * (box_w - 2) + "\u2518"
+    mid = "\u251c" + "\u2500" * (box_w - 2) + "\u2524"
+    try:
+        stdscr.addstr(y0, x0, top[: max_x - x0 - 1])
+    except curses.error:
+        pass
+
+    for i in range(box_h - 2):
+        y = y0 + 1 + i
         if y >= max_y - 1:
             break
-        x = max(0, (max_x - len(line)) // 2)
+        if i < len(HELP_LINES):
+            text = HELP_LINES[i]
+            # Title line centered, section headers bold
+            if i == 0:
+                pad_l = (inner_w - len(text)) // 2
+                content = " " * pad_l + text
+            else:
+                content = " " + text
+            content = content[:inner_w]
+            content = content + " " * (inner_w - len(content))
+            row = "\u2502 " + content + " \u2502"
+        else:
+            row = "\u2502" + " " * (box_w - 2) + "\u2502"
+        attr = curses.A_BOLD if i == 0 else 0
+        # Draw separator before FOOTER
+        if i == len(HELP_LINES) - 2 and i > 0:
+            try:
+                stdscr.addstr(y, x0, mid[: max_x - x0 - 1], curses.A_DIM)
+            except curses.error:
+                pass
+            continue
         try:
-            stdscr.addstr(y, x, line[: max_x - 1], curses.A_BOLD)
+            stdscr.addstr(y, x0, row[: max_x - x0 - 1], attr)
         except curses.error:
             pass
+
+    try:
+        stdscr.addstr(y0 + box_h - 1, x0, bot[: max_x - x0 - 1])
+    except curses.error:
+        pass
+
     stdscr.refresh()
-    stdscr.timeout(-1)  # block until keypress
+    stdscr.timeout(-1)
     try:
         stdscr.get_wch()
     except curses.error:
         pass
-    stdscr.timeout(200)  # restore normal timeout
+    stdscr.timeout(200)
 
 
 def run_app(iface: str, use_monitor: bool) -> int:
