@@ -1,4 +1,4 @@
-"""Curses application loop."""
+"""Curses application loop with vi-style input model."""
 
 from __future__ import annotations
 
@@ -50,6 +50,22 @@ class BearingCalibrator:
             dev.bearing_confidence = min(1.0, spread / 20.0)
 
 
+# vi-style commands executed from command mode
+COMMANDS: dict[str, str] = {
+    "q": "quit",
+    "quit": "quit",
+    "r": "rescan",
+    "rescan": "rescan",
+    "m": "monitor",
+    "monitor": "monitor",
+    "c": "calib",
+    "calib": "calib",
+    "calibrate": "calib",
+    "h": "help",
+    "help": "help",
+}
+
+
 def run_app(iface: str, use_monitor: bool) -> int:
     """Main curses application. Returns exit code."""
     store = DeviceStore()
@@ -74,6 +90,9 @@ def run_app(iface: str, use_monitor: bool) -> int:
 
         worker.start()
 
+        command_mode = False
+        command_buf = ""
+
         while True:
             devices = store.snapshot()
 
@@ -84,9 +103,12 @@ def run_app(iface: str, use_monitor: bool) -> int:
                     calibrator.apply(store)
                     worker.status = "Calibration complete"
 
+            # Build status string
+            display_status = f":{command_buf}\u2588" if command_mode else worker.status
+
             draw_radar(
                 stdscr, devices, heading, calibrator.active,
-                worker.status, selected_mac,
+                display_status, selected_mac,
             )
 
             try:
@@ -95,47 +117,129 @@ def run_app(iface: str, use_monitor: bool) -> int:
                 break
             if key == -1:
                 continue
-            if key in (ord("q"), ord("Q"), 27):
+
+            # ── Command mode (vi-style :command) ──────────────────────
+            if command_mode:
+                if key == 27:  # Esc — cancel command
+                    command_mode = False
+                    command_buf = ""
+                elif key in (10, 13, curses.KEY_ENTER):  # Enter — execute
+                    command_mode = False
+                    cmd = command_buf.strip().lower()
+                    command_buf = ""
+                    action = COMMANDS.get(cmd, "")
+                    if action == "quit":
+                        return
+                    elif action == "rescan":
+                        worker.force_rescan()
+                    elif action == "monitor":
+                        worker.toggle_monitor()
+                    elif action == "calib":
+                        if calibrator.active:
+                            calibrator.stop()
+                            calibrator.apply(store)
+                            worker.status = "Calibration stopped"
+                        else:
+                            calibrator.start()
+                            worker.status = "CALIBRATING: rotate slowly, h/l to turn"
+                    elif action == "help":
+                        worker.status = (
+                            "Normal: h/l=hdg j/k=sel q=quit | "
+                            "Cmd(:): q r m c help"
+                        )
+                    else:
+                        worker.status = f"Unknown command: {cmd}"
+                elif key in (curses.KEY_BACKSPACE, 127, 8):
+                    command_buf = command_buf[:-1]
+                    if not command_buf:
+                        command_mode = False
+                elif 32 <= key < 127:
+                    command_buf += chr(key)
+                continue
+
+            # ── Normal mode (vi-style single keys) ────────────────────
+
+            # Quit
+            if key in (ord("q"), ord("Q")):
                 break
-            if key in (ord("r"), ord("R")):
+
+            # Enter command mode
+            if key == ord(":"):
+                command_mode = True
+                command_buf = ""
+                continue
+
+            # Heading: h = left, l = right (vi motion)
+            if key in (ord("h"), curses.KEY_LEFT):
+                heading = (heading - 5) % 360
+            elif key in (ord("l"), curses.KEY_RIGHT):
+                heading = (heading + 5) % 360
+            elif key in (ord("H"),):
+                heading = (heading - 15) % 360
+            elif key in (ord("L"),):
+                heading = (heading + 15) % 360
+
+            # Selection: j = down, k = up (vi motion)
+            elif key in (ord("k"), curses.KEY_UP):
+                if devices:
+                    if selected_mac is None:
+                        selected_mac = devices[0].mac
+                    else:
+                        idx = next(
+                            (i for i, d in enumerate(devices)
+                             if d.mac == selected_mac), 0
+                        )
+                        idx = max(0, idx - 1)
+                        selected_mac = devices[idx].mac
+            elif key in (ord("j"), curses.KEY_DOWN):
+                if devices:
+                    if selected_mac is None:
+                        selected_mac = devices[-1].mac
+                    else:
+                        idx = next(
+                            (i for i, d in enumerate(devices)
+                             if d.mac == selected_mac), 0
+                        )
+                        idx = min(len(devices) - 1, idx + 1)
+                        selected_mac = devices[idx].mac
+
+            # Deselect
+            elif key == 27:  # Esc
+                selected_mac = None
+
+            # Quick actions
+            elif key in (ord("r"), ord("R")):
                 worker.force_rescan()
-            if key in (ord("m"), ord("M")):
+            elif key in (ord("m"), ord("M")):
                 worker.toggle_monitor()
-            if key in (ord("c"), ord("C")):
+            elif key in (ord("c"), ord("C")):
                 if calibrator.active:
                     calibrator.stop()
                     calibrator.apply(store)
                     worker.status = "Calibration stopped"
                 else:
                     calibrator.start()
-                    worker.status = "Calibrating: rotate slowly, use \u2190\u2192"
-            if key == curses.KEY_LEFT:
-                heading = (heading - 5) % 360
-            if key == curses.KEY_RIGHT:
-                heading = (heading + 5) % 360
-            if key == curses.KEY_UP:
+                    worker.status = "CALIBRATING: rotate slowly, h/l to turn"
+
+            # First/last device
+            elif key in (ord("g"),):
                 if devices:
-                    if selected_mac is None:
-                        selected_mac = devices[0].mac
-                    else:
-                        idx = next(
-                            (i for i, d in enumerate(devices) if d.mac == selected_mac), 0
-                        )
-                        idx = max(0, idx - 1)
-                        selected_mac = devices[idx].mac
-            if key == curses.KEY_DOWN:
+                    selected_mac = devices[0].mac
+            elif key in (ord("G"),):
                 if devices:
-                    if selected_mac is None:
-                        selected_mac = devices[0].mac
-                    else:
-                        idx = next(
-                            (i for i, d in enumerate(devices) if d.mac == selected_mac), 0
-                        )
-                        idx = min(len(devices) - 1, idx + 1)
-                        selected_mac = devices[idx].mac
-            if key in (10, 13) and selected_mac:
-                # Enter deselects (toggle)
-                selected_mac = None
+                    selected_mac = devices[-1].mac
+
+            # Toggle info
+            elif key in (10, 13, curses.KEY_ENTER):
+                if selected_mac:
+                    selected_mac = None
+
+            # Show help
+            elif key == ord("?"):
+                worker.status = (
+                    "h/l=hdg H/L=fast j/k=sel g/G=top/bot "
+                    "q=quit r=rescan m=mon c=cal :=cmd ?=help"
+                )
 
     try:
         curses.wrapper(curses_main)
