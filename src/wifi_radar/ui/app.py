@@ -112,18 +112,20 @@ def run_app(iface: str, use_monitor: bool) -> int:
             )
 
             try:
-                key = stdscr.getch()
+                key = stdscr.get_wch()
+            except curses.error:
+                continue
             except KeyboardInterrupt:
                 break
-            if key == -1:
-                continue
+            # get_wch returns str for characters, int for special keys
+            key_int = ord(key) if isinstance(key, str) else key
 
             # ── Command mode (vi-style :command) ──────────────────────
             if command_mode:
-                if key == 27:  # Esc — cancel command
+                if key_int == 27:  # Esc — cancel command
                     command_mode = False
                     command_buf = ""
-                elif key in (10, 13, curses.KEY_ENTER):  # Enter — execute
+                elif key_int in (10, 13, curses.KEY_ENTER):  # Enter — execute
                     command_mode = False
                     cmd = command_buf.strip().lower()
                     command_buf = ""
@@ -149,38 +151,37 @@ def run_app(iface: str, use_monitor: bool) -> int:
                         )
                     else:
                         worker.status = f"Unknown command: {cmd}"
-                elif key in (curses.KEY_BACKSPACE, 127, 8):
+                elif key_int in (curses.KEY_BACKSPACE, 127, 8):
                     command_buf = command_buf[:-1]
                     if not command_buf:
                         command_mode = False
-                elif 32 <= key < 127:
-                    command_buf += chr(key)
+                elif isinstance(key, str) and len(key) == 1 and key.isprintable():
+                    command_buf += key
                 continue
 
             # ── Normal mode (vi-style single keys) ────────────────────
 
             # Quit
-            if key in (ord("q"), ord("Q")):
+            if key_int in (ord("q"), ord("Q")):
                 break
 
             # Enter command mode
-            if key == ord(":"):
+            elif key_int == ord(":"):
                 command_mode = True
                 command_buf = ""
-                continue
 
             # Heading: h = left, l = right (vi motion)
-            if key in (ord("h"), curses.KEY_LEFT):
+            elif key_int in (ord("h"), curses.KEY_LEFT):
                 heading = (heading - 5) % 360
-            elif key in (ord("l"), curses.KEY_RIGHT):
+            elif key_int in (ord("l"), curses.KEY_RIGHT):
                 heading = (heading + 5) % 360
-            elif key in (ord("H"),):
+            elif key_int == ord("H"):
                 heading = (heading - 15) % 360
-            elif key in (ord("L"),):
+            elif key_int == ord("L"):
                 heading = (heading + 15) % 360
 
             # Selection: j = down, k = up (vi motion)
-            elif key in (ord("k"), curses.KEY_UP):
+            elif key_int in (ord("k"), curses.KEY_UP):
                 if devices:
                     if selected_mac is None:
                         selected_mac = devices[0].mac
@@ -191,7 +192,7 @@ def run_app(iface: str, use_monitor: bool) -> int:
                         )
                         idx = max(0, idx - 1)
                         selected_mac = devices[idx].mac
-            elif key in (ord("j"), curses.KEY_DOWN):
+            elif key_int in (ord("j"), curses.KEY_DOWN):
                 if devices:
                     if selected_mac is None:
                         selected_mac = devices[-1].mac
@@ -204,15 +205,15 @@ def run_app(iface: str, use_monitor: bool) -> int:
                         selected_mac = devices[idx].mac
 
             # Deselect
-            elif key == 27:  # Esc
+            elif key_int == 27:  # Esc
                 selected_mac = None
 
             # Quick actions
-            elif key in (ord("r"), ord("R")):
+            elif key_int in (ord("r"), ord("R")):
                 worker.force_rescan()
-            elif key in (ord("m"), ord("M")):
+            elif key_int in (ord("m"), ord("M")):
                 worker.toggle_monitor()
-            elif key in (ord("c"), ord("C")):
+            elif key_int in (ord("c"), ord("C")):
                 if calibrator.active:
                     calibrator.stop()
                     calibrator.apply(store)
@@ -222,20 +223,20 @@ def run_app(iface: str, use_monitor: bool) -> int:
                     worker.status = "CALIBRATING: rotate slowly, h/l to turn"
 
             # First/last device
-            elif key in (ord("g"),):
+            elif key_int == ord("g"):
                 if devices:
                     selected_mac = devices[0].mac
-            elif key in (ord("G"),):
+            elif key_int == ord("G"):
                 if devices:
                     selected_mac = devices[-1].mac
 
             # Toggle info
-            elif key in (10, 13, curses.KEY_ENTER):
+            elif key_int in (10, 13, curses.KEY_ENTER):
                 if selected_mac:
                     selected_mac = None
 
             # Show help
-            elif key == ord("?"):
+            elif key_int == ord("?"):
                 worker.status = (
                     "h/l=hdg H/L=fast j/k=sel g/G=top/bot "
                     "q=quit r=rescan m=mon c=cal :=cmd ?=help"
