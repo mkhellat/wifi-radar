@@ -1,0 +1,7 @@
+ BSSID, First time seen, Last time seen, channel, Speed, Privacy, Cipher, Authentication, Power, # beacons, # IV, LAN IP, ID-length, ESSID, Key
+ AA:BB:CC:DD:EE:01, 2026-08-19 10:00:00, 2026-08-19 10:01:00, 6, 54, WPA2, CCMP, PSK, -45, 100, 0, 0.0.0.0, 11, HomeNetwork,
+ 11:22:33:44:55:66, 2026-08-19 10:00:00, 2026-08-19 10:01:00, 36, 54, WPA2, CCMP, PSK, -72, 50, 0, 0.0.0.0, 8, Office5G,
+
+ Station MAC, First time seen, Last time seen, Power, # packets, BSSID, Probed ESSIDs
+ AA:BB:CC:11:22:33, 2026-08-19 10:00:05, 2026-08-19 10:01:00, -55, 120, AA:BB:CC:DD:EE:01, 
+ DE:AD:00:00:00:01, 2026-08-19 10:00:10, 2026-08-19 10:00:50, -80, 5, (not associated), FreeWifi,CoffeeShop

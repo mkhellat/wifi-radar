@@ -1,0 +1,43 @@
+BSS aa:bb:cc:dd:ee:01(on wlan0)
+	TSF: 12345678 usec (0d, 00:00:12)
+	freq: 2437
+	beacon interval: 100 TUs
+	capability: ESS Privacy ShortSlotTime (0x0411)
+	signal: -45.00 dBm
+	last seen: 0 ms ago
+	SSID: HomeNetwork
+	Supported rates: 1.0* 2.0* 5.5* 11.0* 6.0 9.0 12.0 18.0
+	DS Parameter set: channel 6
+	RSN:	 * Version: 1
+		 * Group cipher: CCMP
+		 * Pairwise ciphers: CCMP
+		 * Authentication suites: PSK
+	HT capabilities:
+		Capabilities: 0x19ef
+			RX LDPC
+			HT20/HT40
+			SM Power Save disabled
+	HT operation:
+		 * primary channel: 6
+		 * secondary channel offset: above
+BSS 11:22:33:44:55:66(on wlan0)
+	TSF: 99999999 usec (0d, 00:01:39)
+	freq: 5180
+	beacon interval: 100 TUs
+	capability: ESS Privacy ShortSlotTime (0x0411)
+	signal: -72.00 dBm
+	last seen: 100 ms ago
+	SSID: Office5G
+	Supported rates: 6.0* 9.0 12.0* 18.0 24.0* 36.0 48.0 54.0
+	DS Parameter set: channel 36
+	VHT capabilities:
+		Max MPDU length: 11454
+BSS de:ad:be:ef:ca:fe(on wlan0)
+	TSF: 55555555 usec (0d, 00:00:55)
+	freq: 2412
+	beacon interval: 100 TUs
+	capability: ESS (0x0001)
+	signal: -88.00 dBm
+	last seen: 500 ms ago
+	SSID: 
+	Supported rates: 1.0* 2.0* 5.5* 11.0*
