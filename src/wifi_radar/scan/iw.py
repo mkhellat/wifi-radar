@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from wifi_radar.models import DeviceKind, WifiDevice
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    pass
 
 _BSS_RE = re.compile(r"^BSS ([0-9a-f:]{17})\(on .+\)")
 _FREQ_RE = re.compile(r"^\s+freq:\s+(\d+)")

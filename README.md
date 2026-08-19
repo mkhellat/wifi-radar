@@ -1,64 +1,124 @@
-# WiFi Radar
+# wifi-radar
 
-Interactive terminal tool that maps nearby **WiFi hotspots** (APs), **client adapters**, and **probe-only devices** (phones/laptops searching for networks) on a polar radar display.
+[![License: GPL v3+](https://img.shields.io/badge/license-GPL%20v3+-green.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Python: 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org)
+[![OS: Linux](https://img.shields.io/badge/os-Linux-yellow.svg)](https://kernel.org)
+
+Interactive terminal radar that maps nearby **WiFi access points**, **associated clients**, and **probe-only adapters** on a polar display. Estimates distance from RSSI and direction from calibration or MAC-hash placeholder.
+
+> **Passive observation only.** No deauth, injection, association, or cracking.
 
 ## What it detects
 
-| Symbol | Type | Source |
-|--------|------|--------|
-| ◉ | Hotspot / listening AP | `nmcli` managed scan + `airodump-ng` beacons |
-| ◎ | Client adapter | `airodump-ng` associated stations |
-| ○ | Normal WiFi adapter (unassociated) | Probe requests via `tshark` / passive monitor |
-
-## Distance & direction (estimates)
-
-- **Distance** — derived from RSSI using a log-distance path-loss model. Indoors this is only a rough order-of-magnitude (meters), not GPS accuracy.
-- **Direction** — true bearing needs either a directional antenna or **calibration**: press `c`, slowly rotate your laptop, and use `←` `→` to match your physical heading. The tool records RSSI vs. heading and places each device toward its strongest signal. Without calibration, devices are placed at a stable pseudo-angle by MAC hash (marked *uncalibrated* in the detail line).
+| Glyph | Kind | Source |
+|-------|------|--------|
+| ◉ | Hotspot / AP | `iw scan` (managed) + `airodump-ng` beacons |
+| ◎ | Associated client | `airodump-ng` stations |
+| ○ | Probe-only adapter | `tshark` probe requests |
 
 ## Requirements
 
-Assumed on PATH:
+**Linux** with nl80211-compatible WiFi hardware.
 
-- `iw`, `ip`, `nmcli` — interface & AP scan
-- `airodump-ng` — passive monitor scan (APs + clients)
-- `tshark` — optional probe-request / adapter enrichment
-- `sudo` — for monitor interface (`wlan0mon`) creation
+System tools (must be on `$PATH`):
+
+| Tool | Required | Purpose |
+|------|----------|---------|
+| `iw` | Always | AP scan, interface discovery |
+| `ip` | For monitor | Bring up monitor VIF |
+| `airodump-ng` | Optional | Client/probe passive capture |
+| `tshark` | Optional | Probe-request enrichment |
+
+Root (`sudo`) is needed for monitor-mode features.
+
+Python 3.11 or later (stdlib only — no pip dependencies at runtime).
+
+## Install
+
+```bash
+# From PyPI (when published)
+pip install wifi-radar
+
+# From source
+git clone https://github.com/mkhellat/wifi-radar.git
+cd wifi-radar
+pip install -e .
+```
 
 ## Usage
 
 ```bash
-# Full scan (AP + monitor clients/adapters)
-sudo ./wifi_radar.py
+# Auto-detect interface, full scan (AP + monitor)
+sudo wifi-radar
 
-# Different interface
-sudo ./wifi_radar.py -i wlan0
+# Specify interface
+sudo wifi-radar -i wlan0
 
-# AP hotspots only (no monitor mode)
-./wifi_radar.py --no-monitor
+# AP scan only (no monitor mode, no root needed)
+wifi-radar --no-monitor
 
-# Refresh vendor names (IEEE OUI database)
-./wifi_radar.py --fetch-oui
+# Download IEEE OUI vendor database
+wifi-radar --fetch-oui
+
+# Show version
+wifi-radar --version
 ```
 
-### Keys
+## Keys
 
 | Key | Action |
 |-----|--------|
-| `q` | Quit |
+| `q` / `Esc` | Quit |
 | `r` | Force rescan |
 | `m` | Toggle monitor-mode sampling |
-| `c` | Start/stop bearing calibration (rotate laptop while calibrating) |
-| `←` `→` | Adjust heading indicator / calibration bearing |
+| `c` | Start/stop bearing calibration |
+| `←` `→` | Rotate heading (plot rotates with you) |
 | `↑` `↓` | Select device in list |
 | `Enter` | Show detail for selected device |
 
+## Distance & direction
+
+- **Distance** — log-distance path-loss model with reference RSSI at 1 m. Indoor accuracy is order-of-magnitude (metres), not GPS.
+- **Direction** — requires calibration: press `c`, slowly rotate your laptop, use `←`/`→` to set heading. The tool records RSSI vs heading and places devices toward their strongest signal. Without calibration, devices sit at a stable pseudo-angle from MAC hash.
+
+## Architecture
+
+```
+src/wifi_radar/
+  cli.py          CLI entry point
+  models.py       WifiDevice, DeviceKind
+  merge.py        DeviceStore (EMA RSSI, TTL expiry)
+  worker.py       Background scan thread
+  iface.py        Interface discovery, MonitorSession
+  oui.py          OUI vendor lookup/fetch
+  util.py         MAC normalization
+  scan/
+    iw.py         Parse `iw dev <iface> scan`
+    airodump.py   Parse airodump-ng CSV
+    tshark.py     Parse tshark probe fields
+  ui/
+    radar.py      Polar drawing (curses)
+    app.py        Main loop, keys, calibration
+```
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+pytest
+ruff check src/ tests/
+mypy
+```
+
+## Mirrors
+
+- GitHub: https://github.com/mkhellat/wifi-radar
+- Codeberg: https://codeberg.org/mkhellat/wifi-radar
+
 ## Legal & ethics
 
-Only use on networks and airspace you are allowed to monitor. Passive scanning may still be restricted in some jurisdictions. Do not use this tool to access networks without authorization.
+Only use on networks and airspace you are authorised to monitor. Passive scanning may still be restricted in some jurisdictions. This tool does not access, associate with, or attack any network.
 
-## Limitations
+## License
 
-- Single radio cannot measure true angle without rotation calibration or directional hardware.
-- Randomized MACs (modern phones) appear as changing addresses; vendor detection may show “randomized MAC”.
-- 5 GHz and 2.4 GHz require channel hopping; `airodump-ng --band abg` covers both but brief samples may miss quiet devices.
-- Your own machine’s traffic dominates when associated to an AP on the same channel.
+[GPL-3.0-or-later](LICENSE)

@@ -51,7 +51,7 @@ def draw_radar(
     max_r = max(4, min(cx - 4, cy - 2, 20))
 
     # Draw range rings
-    for ring_frac, label in ((1.0, "far"), (0.66, ""), (0.33, "near")):
+    for ring_frac, _label in ((1.0, "far"), (0.66, ""), (0.33, "near")):
         ring = int(max_r * ring_frac)
         for deg in range(0, 360, 6):
             rad = math.radians(deg - 90)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from wifi_radar.merge import DeviceStore, RSSI_EMA_ALPHA
+from wifi_radar.merge import RSSI_EMA_ALPHA, DeviceStore
 from wifi_radar.models import DeviceKind, WifiDevice
 
 

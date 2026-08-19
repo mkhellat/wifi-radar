@@ -13,6 +13,7 @@ from pathlib import Path
 
 from wifi_radar.iface import MonitorSession
 from wifi_radar.merge import DeviceStore
+from wifi_radar.models import WifiDevice
 from wifi_radar.oui import load_oui_map, vendor_for
 from wifi_radar.scan.airodump import parse_airodump_csv
 from wifi_radar.scan.iw import run_iw_scan
@@ -104,7 +105,7 @@ class ScanWorker:
         except Exception as exc:  # noqa: BLE001
             self.status = f"Monitor error: {exc}"
 
-    def _run_airodump(self) -> tuple[list, list]:
+    def _run_airodump(self) -> tuple[list[WifiDevice], list[WifiDevice]]:
         prefix = self._work_dir / "dump"
         for old in self._work_dir.glob("dump-*.csv"):
             old.unlink(missing_ok=True)
@@ -128,7 +129,7 @@ class ScanWorker:
         csv_path = Path(f"{prefix}-01.csv")
         return parse_airodump_csv(csv_path)
 
-    def _run_tshark(self) -> list:
+    def _run_tshark(self) -> list[WifiDevice]:
         if not shutil.which("tshark"):
             return []
         return run_tshark_probes(self._monitor.mon_iface, seconds=2.0)

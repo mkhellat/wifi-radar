@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -63,7 +62,7 @@ class WifiDevice:
         if self.freq_mhz > 4000:
             n += 0.3  # 5 GHz attenuates faster through walls
         exponent = (ref - self.rssi_dbm) / (10.0 * n)
-        return min(120.0, max(0.5, 10.0**exponent))
+        return float(min(120.0, max(0.5, 10.0**exponent)))
 
     def display_bearing(self) -> float:
         if self.bearing_deg is not None:
