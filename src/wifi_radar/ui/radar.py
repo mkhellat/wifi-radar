@@ -209,7 +209,7 @@ def draw_radar(
 
     # Key hints
     try:
-        keys = "[q]uit [r]escan [m]on [c]alib [\u2190\u2192]hdg [\u2191\u2193]sel [Ret]desel"
+        keys = "h/l=hdg  j/k=sel  q=quit  r=rescan  m=mon  c=cal  :=cmd  ?=help"
         stdscr.addstr(panel_y + 3, 1, keys[: max_x - 3], curses.A_DIM)
     except curses.error:
         pass
