@@ -1,5 +1,6 @@
 # wifi-radar Makefile
-# POSIX make compatible (no GNU-only features in recipes).
+# Requires GNU make (uses include, ?=, .PHONY).
+# Target platform is GNU/Linux only (nl80211 / cfg80211).
 # Run ./configure first to generate config.mk.
 #
 # Usage:
