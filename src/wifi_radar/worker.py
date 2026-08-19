@@ -40,6 +40,7 @@ class ScanWorker:
         self._monitor = MonitorSession(iface)
         self._work_dir = Path(tempfile.mkdtemp(prefix="wifi_radar_"))
         self._stop = threading.Event()
+        self._rescan_event = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self.status = "Starting..."
         self.mon_enabled = self.use_monitor
@@ -57,17 +58,17 @@ class ScanWorker:
         self.status = f"Monitor {'ON' if self.mon_enabled else 'OFF'}"
 
     def force_rescan(self) -> None:
-        """Trigger an immediate scan cycle (best-effort)."""
-        self._do_iw_scan()
-        if self.mon_enabled:
-            self._do_monitor_scan()
+        """Signal the worker thread to rescan immediately."""
+        self._rescan_event.set()
 
     def _loop(self) -> None:
         while not self._stop.is_set():
+            self._rescan_event.clear()
             self._do_iw_scan()
             if self.mon_enabled:
                 self._do_monitor_scan()
-            self._stop.wait(SCAN_INTERVAL)
+            # Wait for interval or until force_rescan is called
+            self._rescan_event.wait(SCAN_INTERVAL)
 
     def _do_iw_scan(self) -> None:
         try:
