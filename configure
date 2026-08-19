@@ -1,126 +1,441 @@
 #!/bin/sh
-# configure -- detect build prerequisites and write config.mk
-# POSIX-compliant. No bashisms.
+# configure -- detect platform, prerequisites, and generate config.mk
+# wifi-radar build configuration script
+# POSIX-compliant (no bashisms). Tested with dash, ash, busybox sh.
+#
+# Modelled after pciutils/configure and suckless config.mk generation.
+# This project targets GNU/Linux exclusively (nl80211 / cfg80211).
 set -e
 
+# ============================================================================
 # Defaults
+# ============================================================================
+
 PREFIX="${PREFIX:-/usr/local}"
+BINDIR="${BINDIR:-\$(PREFIX)/bin}"
+DATADIR="${DATADIR:-\$(PREFIX)/share/wifi-radar}"
+MANDIR="${MANDIR:-\$(PREFIX)/share/man}"
 PYTHON="${PYTHON:-python3}"
 VENV_DIR="${VENV_DIR:-.venv}"
-SPHINX_BUILD=""
 INSTALL_EXTRAS=""
 
-# --- Helpers ----------------------------------------------------------------
+# Feature flags (auto-detected, overridable)
+HAVE_IW="${HAVE_IW:-auto}"
+HAVE_IP="${HAVE_IP:-auto}"
+HAVE_AIRODUMP="${HAVE_AIRODUMP:-auto}"
+HAVE_TSHARK="${HAVE_TSHARK:-auto}"
+HAVE_SPHINX="${HAVE_SPHINX:-auto}"
 
-die() { printf 'configure: error: %s\n' "$1" >&2; exit 1; }
-info() { printf '  %-20s %s\n' "$1" "$2"; }
-found() { info "$1" "$2 ... found"; }
-missing() { info "$1" "(not found, optional)"; }
+# ============================================================================
+# Helpers
+# ============================================================================
+
+die() {
+    printf '\033[1;31mconfigure: error:\033[0m %s\n' "$1" >&2
+    exit 1
+}
+
+warn() {
+    printf '\033[1;33mwarning:\033[0m %s\n' "$1" >&2
+}
+
+info() {
+    printf '  %-24s %s\n' "$1" "$2"
+}
+
+found() {
+    printf '  %-24s \033[32m%s\033[0m\n' "$1" "$2"
+}
+
+missing() {
+    printf '  %-24s \033[33m%s\033[0m\n' "$1" "(not found)"
+}
+
+check_cmd() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# ============================================================================
+# Usage
+# ============================================================================
 
 usage() {
     cat <<'EOF'
+`configure' detects build prerequisites for wifi-radar and generates config.mk.
+
 Usage: ./configure [OPTIONS]
 
-Detect build prerequisites and generate config.mk.
+Installation directories:
+  --prefix=DIR            Installation prefix            [/usr/local]
+  --bindir=DIR            Executable directory           [PREFIX/bin]
+  --datadir=DIR           Read-only data directory       [PREFIX/share/wifi-radar]
+  --mandir=DIR            Man page directory             [PREFIX/share/man]
 
-Options:
-  --prefix=DIR        Installation prefix        [/usr/local]
-  --python=PATH       Python 3 interpreter       [python3]
-  --venv=DIR          Virtual-environment path   [.venv]
-  --with-docs         Include documentation deps in venv
-  --help              Show this help and exit
+Python environment:
+  --python=PATH           Python 3 interpreter path     [python3]
+  --venv=DIR              Virtual-environment directory  [.venv]
+  --with-docs             Include Sphinx documentation dependencies
 
-Environment variables:
-  PREFIX              Same as --prefix
-  PYTHON              Same as --python
-  VENV_DIR            Same as --venv
+Feature overrides (bypass auto-detection):
+  --with-iw=yes|no        Force iw availability
+  --with-ip=yes|no        Force ip availability
+  --with-airodump=yes|no  Force airodump-ng availability
+  --with-tshark=yes|no    Force tshark availability
+
+Miscellaneous:
+  --help, -h              Show this help and exit
+
+Environment variables (override corresponding options):
+  PREFIX, BINDIR, DATADIR, MANDIR, PYTHON, VENV_DIR
+  CC (for future C extensions)
 
 After running configure, use `make` to build.
-Run `make help` for a list of all targets.
+Run `make help` for a list of all available targets.
+
+Report bugs to: https://github.com/mkhellat/wifi-radar/issues
 EOF
     exit 0
 }
 
-# --- Parse arguments --------------------------------------------------------
+# ============================================================================
+# Parse arguments
+# ============================================================================
 
 for arg in "$@"; do
     case "$arg" in
-        --prefix=*)   PREFIX="${arg#*=}" ;;
-        --python=*)   PYTHON="${arg#*=}" ;;
-        --venv=*)     VENV_DIR="${arg#*=}" ;;
-        --with-docs)  INSTALL_EXTRAS="docs" ;;
-        --help|-h)    usage ;;
-        *)            die "unknown option: $arg" ;;
+        --prefix=*)        PREFIX="${arg#*=}" ;;
+        --bindir=*)        BINDIR="${arg#*=}" ;;
+        --datadir=*)       DATADIR="${arg#*=}" ;;
+        --mandir=*)        MANDIR="${arg#*=}" ;;
+        --python=*)        PYTHON="${arg#*=}" ;;
+        --venv=*)          VENV_DIR="${arg#*=}" ;;
+        --with-docs)       INSTALL_EXTRAS="docs" ;;
+        --with-iw=*)       HAVE_IW="${arg#*=}" ;;
+        --with-ip=*)       HAVE_IP="${arg#*=}" ;;
+        --with-airodump=*) HAVE_AIRODUMP="${arg#*=}" ;;
+        --with-tshark=*)   HAVE_TSHARK="${arg#*=}" ;;
+        --help|-h)         usage ;;
+        *)                 die "unrecognised option: $arg (try --help)" ;;
     esac
 done
 
-# --- Check Python -----------------------------------------------------------
+# ============================================================================
+# Platform detection
+# ============================================================================
 
-printf 'Checking build prerequisites...\n'
+printf 'Detecting platform...\n'
 
-if ! command -v "$PYTHON" >/dev/null 2>&1; then
-    die "$PYTHON not found. Set PYTHON= or --python= to a Python 3.11+ interpreter."
+OS=$(uname -s)
+OS_RELEASE=$(uname -r)
+ARCH=$(uname -m)
+HOSTNAME=$(uname -n)
+
+info "operating system" "$OS"
+info "kernel release" "$OS_RELEASE"
+info "architecture" "$ARCH"
+info "hostname" "$HOSTNAME"
+
+# This project requires Linux (nl80211 / cfg80211 subsystem)
+case "$OS" in
+    Linux|GNU|GNU/Linux)
+        ;;
+    *)
+        die "wifi-radar requires Linux (nl80211). Detected: $OS"
+        ;;
+esac
+
+# ============================================================================
+# Kernel feature checks
+# ============================================================================
+
+printf '\nChecking kernel features...\n'
+
+# Check for nl80211 / cfg80211 (loaded or built-in)
+if [ -d /sys/class/net ]; then
+    found "sysfs net" "/sys/class/net"
+else
+    die "/sys/class/net not found. Is sysfs mounted?"
 fi
 
-PY_VERSION=$("$PYTHON" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+# Check for wireless subsystem
+NL80211_LOADED=no
+if [ -d /sys/class/ieee80211 ]; then
+    NL80211_LOADED=yes
+    PHY_COUNT=$(ls -1 /sys/class/ieee80211/ 2>/dev/null | wc -l)
+    found "ieee80211 (nl80211)" "$PHY_COUNT phy device(s)"
+elif check_cmd modprobe && modprobe -n cfg80211 2>/dev/null; then
+    warn "cfg80211 not loaded but module exists. Load with: modprobe cfg80211"
+    NL80211_LOADED=no
+else
+    warn "no ieee80211 sysfs and no cfg80211 module found"
+    warn "wifi-radar requires nl80211-compatible wireless hardware"
+    NL80211_LOADED=no
+fi
+
+# Check kernel version (nl80211 stable since ~3.0, prefer 4.0+)
+KERN_MAJOR=$(echo "$OS_RELEASE" | cut -d. -f1)
+KERN_MINOR=$(echo "$OS_RELEASE" | cut -d. -f2)
+if [ "$KERN_MAJOR" -ge 4 ]; then
+    found "kernel version" "$OS_RELEASE (>= 4.0, good)"
+elif [ "$KERN_MAJOR" -eq 3 ]; then
+    warn "kernel $OS_RELEASE: nl80211 should work but 4.0+ recommended"
+    info "kernel version" "$OS_RELEASE (>= 3.0, acceptable)"
+else
+    die "kernel $OS_RELEASE too old. nl80211 requires >= 3.0"
+fi
+
+# Check for monitor mode support indicators
+if [ -r /proc/net/wireless ]; then
+    found "/proc/net/wireless" "present"
+fi
+
+# ============================================================================
+# Python interpreter
+# ============================================================================
+
+printf '\nChecking Python environment...\n'
+
+if ! check_cmd "$PYTHON"; then
+    die "$PYTHON not found. Install Python 3.11+ or set --python=PATH"
+fi
+
+PY_VERSION=$("$PYTHON" -c 'import sys; print("{}.{}".format(sys.version_info.major, sys.version_info.minor))')
 PY_MAJOR=$("$PYTHON" -c 'import sys; print(sys.version_info.major)')
 PY_MINOR=$("$PYTHON" -c 'import sys; print(sys.version_info.minor)')
+PY_IMPL=$("$PYTHON" -c 'import platform; print(platform.python_implementation())')
+PY_FULL=$("$PYTHON" -c 'import sys; print(sys.version.split()[0])')
+PY_PREFIX=$("$PYTHON" -c 'import sys; print(sys.prefix)')
 
 if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 11 ]; }; then
     die "Python >= 3.11 required (found $PY_VERSION)"
 fi
-found "python" "$PYTHON ($PY_VERSION)"
+found "python" "$PYTHON ($PY_IMPL $PY_FULL)"
 
-# --- Check venv module ------------------------------------------------------
-
+# Check venv module
 if ! "$PYTHON" -c 'import venv' 2>/dev/null; then
     die "Python venv module not available. Install python3-venv or equivalent."
 fi
 found "venv module" "available"
 
-# --- Check system tools (informational) -------------------------------------
-
-for tool in iw ip airodump-ng tshark; do
-    if command -v "$tool" >/dev/null 2>&1; then
-        found "$tool" "$(command -v "$tool")"
-    else
-        missing "$tool"
-    fi
-done
-
-# --- Check sphinx-build (for docs) ------------------------------------------
-
-if command -v sphinx-build >/dev/null 2>&1; then
-    SPHINX_BUILD="sphinx-build"
-    found "sphinx-build" "$(command -v sphinx-build)"
-elif [ -x "$VENV_DIR/bin/sphinx-build" ]; then
-    SPHINX_BUILD="$VENV_DIR/bin/sphinx-build"
-    found "sphinx-build" "$SPHINX_BUILD (in venv)"
+# Check curses module (required at runtime)
+if "$PYTHON" -c 'import curses' 2>/dev/null; then
+    found "curses module" "available"
+else
+    die "Python curses module not available. Install libncurses-dev / ncurses."
 fi
 
-# --- Check make -------------------------------------------------------------
+# ============================================================================
+# System tool detection
+# ============================================================================
 
-if ! command -v make >/dev/null 2>&1; then
+printf '\nChecking system tools...\n'
+
+# iw — required for AP scanning and interface management
+IW_PATH=""
+if [ "$HAVE_IW" = "auto" ]; then
+    if check_cmd iw; then
+        HAVE_IW=yes
+        IW_PATH=$(command -v iw)
+    else
+        HAVE_IW=no
+    fi
+fi
+if [ "$HAVE_IW" = "yes" ]; then
+    IW_VERSION=$(iw --version 2>/dev/null | head -1 || echo "unknown")
+    found "iw (required)" "${IW_PATH:-iw} ($IW_VERSION)"
+else
+    die "iw not found. Install iw (required for all scanning)."
+fi
+
+# ip — needed for bringing up monitor interfaces
+IP_PATH=""
+if [ "$HAVE_IP" = "auto" ]; then
+    if check_cmd ip; then
+        HAVE_IP=yes
+        IP_PATH=$(command -v ip)
+    else
+        HAVE_IP=no
+    fi
+fi
+if [ "$HAVE_IP" = "yes" ]; then
+    found "ip" "${IP_PATH:-ip}"
+else
+    warn "ip not found. Monitor interface bring-up will fail."
+fi
+
+# airodump-ng — optional, for client/probe passive capture
+AIRODUMP_PATH=""
+if [ "$HAVE_AIRODUMP" = "auto" ]; then
+    if check_cmd airodump-ng; then
+        HAVE_AIRODUMP=yes
+        AIRODUMP_PATH=$(command -v airodump-ng)
+    else
+        HAVE_AIRODUMP=no
+    fi
+fi
+if [ "$HAVE_AIRODUMP" = "yes" ]; then
+    found "airodump-ng (optional)" "${AIRODUMP_PATH:-airodump-ng}"
+else
+    missing "airodump-ng (optional)"
+fi
+
+# tshark — optional, for probe-request enrichment
+TSHARK_PATH=""
+if [ "$HAVE_TSHARK" = "auto" ]; then
+    if check_cmd tshark; then
+        HAVE_TSHARK=yes
+        TSHARK_PATH=$(command -v tshark)
+    else
+        HAVE_TSHARK=no
+    fi
+fi
+if [ "$HAVE_TSHARK" = "yes" ]; then
+    TSHARK_VERSION=$(tshark --version 2>/dev/null | head -1 || echo "unknown")
+    found "tshark (optional)" "${TSHARK_PATH:-tshark}"
+else
+    missing "tshark (optional)"
+fi
+
+# ============================================================================
+# Build tools
+# ============================================================================
+
+printf '\nChecking build tools...\n'
+
+# GNU make
+if ! check_cmd make; then
     die "GNU make not found. Install make."
 fi
-found "make" "$(command -v make)"
+MAKE_VERSION=$(make --version 2>/dev/null | head -1 || echo "unknown")
+found "make" "$(command -v make) ($MAKE_VERSION)"
 
-# --- Write config.mk --------------------------------------------------------
+# install(1)
+if check_cmd install; then
+    found "install" "$(command -v install)"
+else
+    warn "install(1) not found; 'make install' may fail"
+fi
 
-# Invalidate stamps so `make` re-runs after reconfigure
+# Sphinx (for documentation)
+SPHINX_BUILD=""
+if [ "$HAVE_SPHINX" = "auto" ]; then
+    if check_cmd sphinx-build; then
+        HAVE_SPHINX=yes
+        SPHINX_BUILD=$(command -v sphinx-build)
+    elif [ -x "$VENV_DIR/bin/sphinx-build" ]; then
+        HAVE_SPHINX=yes
+        SPHINX_BUILD="$VENV_DIR/bin/sphinx-build"
+    else
+        HAVE_SPHINX=no
+    fi
+fi
+if [ "$HAVE_SPHINX" = "yes" ]; then
+    found "sphinx-build" "${SPHINX_BUILD}"
+else
+    missing "sphinx-build (install with: pip install sphinx)"
+fi
+
+# ============================================================================
+# Wireless hardware enumeration (informational)
+# ============================================================================
+
+printf '\nDetecting wireless hardware...\n'
+
+if [ -d /sys/class/ieee80211 ] && check_cmd iw; then
+    for phy in /sys/class/ieee80211/phy*; do
+        [ -d "$phy" ] || continue
+        PHY_NAME=$(basename "$phy")
+        # Get driver and device info
+        if [ -L "$phy/device/driver" ]; then
+            DRIVER=$(basename "$(readlink "$phy/device/driver")")
+        else
+            DRIVER="unknown"
+        fi
+        # Get associated netdev
+        NETDEV=""
+        for netdir in "$phy"/device/net/*; do
+            [ -d "$netdir" ] && NETDEV=$(basename "$netdir")
+        done
+        info "$PHY_NAME" "driver=$DRIVER iface=${NETDEV:-none}"
+    done
+else
+    info "(no phy devices)" "wireless hardware not enumerable"
+fi
+
+# ============================================================================
+# Invalidate stale stamps
+# ============================================================================
+
 rm -f "$VENV_DIR/.stamp" "$VENV_DIR/.installed" 2>/dev/null || true
 
-cat > config.mk <<CONF
-# Generated by ./configure on $(date -u +%Y-%m-%dT%H:%M:%SZ)
-# Do not edit; re-run ./configure to regenerate.
+# ============================================================================
+# Write config.mk
+# ============================================================================
 
-PREFIX        := $PREFIX
-PYTHON        := $PYTHON
-PY_VERSION    := $PY_VERSION
-VENV_DIR      := $VENV_DIR
-SPHINX_BUILD  := $SPHINX_BUILD
+printf '\nWriting config.mk...\n'
+
+cat > config.mk <<CONF
+# config.mk — generated by ./configure on $(date -u +%Y-%m-%dT%H:%M:%SZ)
+# Do not edit manually; re-run ./configure to regenerate.
+#
+# Platform: $OS $OS_RELEASE $ARCH
+# Python:   $PY_IMPL $PY_FULL ($PYTHON)
+
+# Installation paths
+PREFIX         := $PREFIX
+BINDIR         := $BINDIR
+DATADIR        := $DATADIR
+MANDIR         := $MANDIR
+
+# Python / venv
+PYTHON         := $PYTHON
+PY_VERSION     := $PY_VERSION
+VENV_DIR       := $VENV_DIR
 INSTALL_EXTRAS := $INSTALL_EXTRAS
+
+# Platform
+OS             := $OS
+OS_RELEASE     := $OS_RELEASE
+ARCH           := $ARCH
+NL80211_LOADED := $NL80211_LOADED
+
+# Tools (paths or empty if unavailable)
+IW_PATH        := $IW_PATH
+IP_PATH        := $IP_PATH
+AIRODUMP_PATH  := $AIRODUMP_PATH
+TSHARK_PATH    := $TSHARK_PATH
+SPHINX_BUILD   := $SPHINX_BUILD
+
+# Feature flags
+HAVE_IW        := $HAVE_IW
+HAVE_IP        := $HAVE_IP
+HAVE_AIRODUMP  := $HAVE_AIRODUMP
+HAVE_TSHARK    := $HAVE_TSHARK
+HAVE_SPHINX    := $HAVE_SPHINX
 CONF
 
-printf '\nConfiguration written to config.mk\n'
-printf 'Run `make` to create venv and install, or `make help` for targets.\n'
+# ============================================================================
+# Summary
+# ============================================================================
+
+printf '\n'
+printf '  \033[1mwifi-radar build configuration\033[0m\n'
+printf '  ═══════════════════════════════════════════════════════\n'
+printf '  Platform:       %s %s (%s)\n' "$OS" "$OS_RELEASE" "$ARCH"
+printf '  Python:         %s %s (%s)\n' "$PY_IMPL" "$PY_FULL" "$PYTHON"
+printf '  Venv:           %s\n' "$VENV_DIR"
+printf '  Prefix:         %s\n' "$PREFIX"
+printf '  ───────────────────────────────────────────────────────\n'
+printf '  iw:             %s\n' "$HAVE_IW"
+printf '  ip:             %s\n' "$HAVE_IP"
+printf '  airodump-ng:    %s\n' "$HAVE_AIRODUMP"
+printf '  tshark:         %s\n' "$HAVE_TSHARK"
+printf '  sphinx-build:   %s\n' "$HAVE_SPHINX"
+printf '  nl80211 loaded: %s\n' "$NL80211_LOADED"
+printf '  ───────────────────────────────────────────────────────\n'
+printf '  Extras:         %s\n' "${INSTALL_EXTRAS:-none}"
+printf '  ═══════════════════════════════════════════════════════\n'
+printf '\n'
+printf '  Configuration written to config.mk\n'
+printf '  Now run: make\n'
+printf '\n'
