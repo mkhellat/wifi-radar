@@ -13,11 +13,9 @@ venv/
 .coverage
 htmlcov/
 docs/_build/
-config.mk
+Makefile
 *.tmp
 .DS_Store
 .claude/settings.local.json
-CLAUDE.md
-CLAUDE.md
 CLAUDE.md
 .cursor/
