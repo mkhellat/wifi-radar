@@ -78,8 +78,9 @@ def run_app(iface: str, use_monitor: bool) -> int:
         nonlocal heading, selected_mac
 
         curses.curs_set(0)
+        curses.noecho()
+        curses.cbreak()
         stdscr.keypad(True)
-        stdscr.nodelay(True)
         stdscr.timeout(200)
         if curses.has_colors():
             curses.start_color()
