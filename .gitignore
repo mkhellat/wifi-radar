@@ -17,3 +17,4 @@ config.mk
 *.tmp
 .DS_Store
 .claude/settings.local.json
+CLAUDE.md
