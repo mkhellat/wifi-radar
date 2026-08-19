@@ -1,41 +1,46 @@
 # wifi-radar Makefile
-# Requires GNU make (uses include, ?=, .PHONY).
-# Target platform is GNU/Linux only (nl80211 / cfg80211).
-# Run ./configure first to generate config.mk.
+# Generated from Makefile.in by ./configure — do not edit directly.
+# Requires GNU make. Target platform: GNU/Linux (nl80211 / cfg80211).
 #
 # Usage:
-#   ./configure            # detect prerequisites, write config.mk
+#   ./configure            # detect platform, generate this Makefile
 #   make                   # bootstrap venv + install package
 #   make help              # show all available targets
 
-# Pull in generated configuration (fail gracefully for `make help`)
--include config.mk
+# Configuration (substituted by ./configure)
+PYTHON         := @PYTHON@
+PY_VERSION     := @PY_VERSION@
+VENV_DIR       := @VENV_DIR@
+PREFIX         := @PREFIX@
+BINDIR         := @BINDIR@
+DATADIR        := @DATADIR@
+MANDIR         := @MANDIR@
+INSTALL_EXTRAS := @INSTALL_EXTRAS@
+SPHINX_BUILD   := @SPHINX_BUILD@
 
-# Fallbacks if config.mk not yet generated
-PYTHON        ?= python3
-VENV_DIR      ?= .venv
-PREFIX        ?= /usr/local
-SPHINX_BUILD  ?= sphinx-build
-INSTALL_EXTRAS ?=
+# Platform (informational, set by ./configure)
+OS             := @OS@
+OS_RELEASE     := @OS_RELEASE@
+ARCH           := @ARCH@
 
 # Derived paths
-VENV_BIN      := $(VENV_DIR)/bin
-VENV_PYTHON   := $(VENV_BIN)/python
-VENV_PIP      := $(VENV_BIN)/pip
-VENV_PYTEST   := $(VENV_BIN)/pytest
-VENV_RUFF     := $(VENV_BIN)/ruff
-VENV_MYPY     := $(VENV_BIN)/mypy
-VENV_SPHINX   := $(VENV_BIN)/sphinx-build
+VENV_BIN       := $(VENV_DIR)/bin
+VENV_PYTHON    := $(VENV_BIN)/python
+VENV_PIP       := $(VENV_BIN)/pip
+VENV_PYTEST    := $(VENV_BIN)/pytest
+VENV_RUFF      := $(VENV_BIN)/ruff
+VENV_MYPY      := $(VENV_BIN)/mypy
+VENV_SPHINX    := $(VENV_BIN)/sphinx-build
 
 # Sentinel files
-VENV_STAMP    := $(VENV_DIR)/.stamp
-INSTALL_STAMP := $(VENV_DIR)/.installed
+VENV_STAMP     := $(VENV_DIR)/.stamp
+INSTALL_STAMP  := $(VENV_DIR)/.installed
 
-# Source inputs that should invalidate the editable install stamp
-PKG_SOURCES   := $(wildcard src/wifi_radar/*.py src/wifi_radar/*/*.py)
-TEST_SOURCES  := $(wildcard tests/*.py)
-DOC_SOURCES   := $(wildcard docs/*.rst docs/*/*.rst)
-BUILD_INPUTS  := Makefile pyproject.toml README.md $(PKG_SOURCES) $(TEST_SOURCES) $(DOC_SOURCES)
+# Source inputs that invalidate the editable install stamp
+PKG_SOURCES    := $(wildcard src/wifi_radar/*.py src/wifi_radar/*/*.py)
+TEST_SOURCES   := $(wildcard tests/*.py)
+DOC_SOURCES    := $(wildcard docs/*.rst docs/*/*.rst)
+BUILD_INPUTS   := Makefile pyproject.toml README.md $(PKG_SOURCES) $(TEST_SOURCES) $(DOC_SOURCES)
 
 # ============================================================================
 # DEFAULT TARGET
@@ -59,18 +64,20 @@ help: ## Show this help
 	@printf 'Available targets:\n\n'
 	@grep -E '^[a-zA-Z_-]+:.*## ' Makefile | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
-	@printf '\nConfiguration variables (from config.mk or environment):\n\n'
+	@printf '\nConfiguration (set by ./configure):\n\n'
 	@printf '  PYTHON          = %s\n' '$(PYTHON)'
+	@printf '  PY_VERSION      = %s\n' '$(PY_VERSION)'
 	@printf '  VENV_DIR        = %s\n' '$(VENV_DIR)'
 	@printf '  PREFIX          = %s\n' '$(PREFIX)'
 	@printf '  INSTALL_EXTRAS  = %s\n' '$(INSTALL_EXTRAS)'
+	@printf '  OS              = %s %s (%s)\n' '$(OS)' '$(OS_RELEASE)' '$(ARCH)'
 	@printf '\nRun ./configure --help for configure options.\n'
 
 # ============================================================================
 # VIRTUAL ENVIRONMENT
 # ============================================================================
 
-$(VENV_STAMP): pyproject.toml configure config.mk
+$(VENV_STAMP): pyproject.toml configure Makefile
 	@printf '>>> Creating virtual environment in %s ...\n' '$(VENV_DIR)'
 	$(PYTHON) -m venv $(VENV_DIR)
 	$(VENV_PIP) install --upgrade pip setuptools wheel >/dev/null
@@ -189,6 +196,6 @@ clean: ## Remove venv, build artifacts, caches
 	@printf '>>> Cleaned.\n'
 
 .PHONY: distclean
-distclean: clean ## Remove everything including config.mk
-	rm -f config.mk
+distclean: clean ## Remove everything including generated Makefile
+	rm -f Makefile
 	@printf '>>> Dist-cleaned (re-run ./configure).\n'
