@@ -3,20 +3,27 @@
 from __future__ import annotations
 
 import time
+from copy import copy
 
+from wifi_radar.calibration import CalibrationStore
 from wifi_radar.models import DeviceKind, WifiDevice
 from wifi_radar.util import normalize_mac
 
 DEFAULT_TTL_SEC = 30.0
-RSSI_EMA_ALPHA = 0.4  # weight of new sample (higher = more responsive)
+RSSI_EMA_ALPHA = 0.25  # smoother RSSI (was 0.4 — too jumpy at close range)
 
 
 class DeviceStore:
     """Thread-safe-ish device registry with decaying RSSI and TTL."""
 
-    def __init__(self, ttl: float = DEFAULT_TTL_SEC) -> None:
+    def __init__(
+        self,
+        ttl: float = DEFAULT_TTL_SEC,
+        calibration: CalibrationStore | None = None,
+    ) -> None:
         self._devices: dict[str, WifiDevice] = {}
         self._ttl = ttl
+        self.calibration = calibration or CalibrationStore()
 
     @property
     def devices(self) -> dict[str, WifiDevice]:
@@ -76,4 +83,16 @@ class DeviceStore:
     def snapshot(self) -> list[WifiDevice]:
         """Return a sorted copy of current devices (strongest first)."""
         self.expire()
-        return sorted(self._devices.values(), key=lambda d: -d.rssi_dbm)
+        out: list[WifiDevice] = []
+        for dev in self._devices.values():
+            d = copy(dev)
+            ref = self.calibration.rssi_at_1m(d.mac)
+            if ref is not None:
+                d.rssi_at_1m_override = ref
+            manual = self.calibration.manual_bearing(d.mac)
+            if manual is not None and d.bearing_deg is None:
+                d.bearing_deg = manual
+                d.bearing_manual = True
+                d.bearing_confidence = 1.0
+            out.append(d)
+        return sorted(out, key=lambda d: -d.rssi_dbm)

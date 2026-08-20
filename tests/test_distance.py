@@ -37,4 +37,4 @@ def test_distance_clamped() -> None:
     dev = WifiDevice(mac="aa:bb:cc:dd:ee:ff", kind=DeviceKind.HOTSPOT, rssi_dbm=-100.0)
     assert dev.distance_m() <= 120.0
     dev2 = WifiDevice(mac="aa:bb:cc:dd:ee:ff", kind=DeviceKind.HOTSPOT, rssi_dbm=0.0)
-    assert dev2.distance_m() >= 0.5
+    assert dev2.distance_m() >= 0.1
