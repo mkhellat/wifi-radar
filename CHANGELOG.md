@@ -18,7 +18,7 @@ Initial structured release (from prototype checkpoint 0).
   auto-detect interface via `iw dev`, tool checks only for what's needed
 - OUI vendor lookup from IEEE CSV cache
 - Interface discovery and monitor-mode lifecycle (`iw` + `ip`)
-- RF theory and capability assessment (`docs/rf-theory-and-capability.md`)
+- RF theory and capability assessment (Sphinx Theory section under ``docs/theory/``)
 - GPL-3.0-or-later license
 
 ### Fixed (from checkpoint 0 defects)

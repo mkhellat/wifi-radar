@@ -365,4 +365,6 @@ See also
 
 - :doc:`../user/calibration` — user workflow for pin and rotation calib
 - :doc:`../user/limitations` — practical caveats
-- :doc:`../rf-theory-and-capability` — RF hardware and receiver limits
+- :doc:`overview` — RF capability overview and reading order
+- :doc:`capability-matrix` — what the adapter can and cannot detect
+- :doc:`tiers` — honest A–D capability tiers
