@@ -84,9 +84,10 @@ the calibration distance :math:`d_\mathrm{cal}`:
 (``CalibrationStore.set_distance_reference`` uses :math:`d_\mathrm{cal} \geq 0.1` m.)
 
 Overrides are persisted in ``~/.cache/wifi_radar/calibration.json`` under
-``rssi_at_1m``. On each ``DeviceStore.snapshot()``, a matching override is
-copied to ``WifiDevice.rssi_at_1m_override`` and used as ``ref`` in the
-distance formula.
+``rssi_at_1m``. The selected calibration distance is also stored as
+``distance_anchor_m`` for scene-correction modes. On each
+``DeviceStore.snapshot()``, a matching override is copied to
+``WifiDevice.rssi_at_1m_override`` and used as ``ref`` in the distance formula.
 
 RSSI smoothing (EMA)
 --------------------
@@ -236,10 +237,72 @@ bearings.
 Displayed bearing
 ~~~~~~~~~~~~~~~~~
 
-``display_bearing()`` returns ``bearing_deg mod 360`` if set, else the
-MAC-hash angle. The detail line shows confidence as a percentage for
-rotation-calibrated devices, ``manual`` for pinned devices, and ``uncal``
-otherwise.
+``display_bearing()`` returns, in order:
+
+1. scene-correction override bearing (if any)
+2. calibrated/manual ``bearing_deg``
+3. MAC-hash placeholder angle
+
+The detail line shows confidence as a percentage for rotation-calibrated
+devices, ``manual`` for pinned devices, and ``uncal`` otherwise.
+
+Scene correction modes
+----------------------
+
+After per-MAC calibration is applied, wifi-radar can optionally derive a
+scene-wide correction from all currently visible calibrated devices.
+
+RF-honest mode
+~~~~~~~~~~~~~~
+
+Saved calibration remains authoritative only for that MAC. For new devices,
+the tool may apply a **global distance scale** derived from the median of
+visible anchor residuals:
+
+.. math::
+
+   s_i = d_{\\mathrm{target},i} / d_{\\mathrm{raw},i}
+
+.. math::
+
+   s = \\mathrm{median}(s_i)
+
+.. math::
+
+   d_{\\mathrm{scene}} = s \\cdot d_{\\mathrm{raw}}
+
+This mode does **not** globally invent physical bearing for unrelated devices.
+
+Anchored-scene mode
+~~~~~~~~~~~~~~~~~~~
+
+This mode uses the same distance scaling, and also computes a heuristic global
+bearing offset from anchors with saved manual bearing:
+
+.. math::
+
+   \\Delta\\theta_i = \\theta_{\\mathrm{manual},i} - \\theta_{\\mathrm{placeholder},i}
+
+.. math::
+
+   \\Delta\\theta = \\mathrm{median}(\\Delta\\theta_i)
+
+For uncalibrated devices:
+
+.. math::
+
+   \\theta_{\\mathrm{scene}} =
+   \\theta_{\\mathrm{placeholder}} + \\Delta\\theta
+
+This is intentionally a **display heuristic**, not angle-of-arrival physics.
+
+Anchor consistency
+~~~~~~~~~~~~~~~~~~
+
+An anchor is marked stale and excluded from scene solving when its currently
+estimated calibrated distance drifts too far from its saved anchor distance.
+The current implementation rejects anchors whose calibrated/current distance is
+outside roughly ``0.55×`` to ``1.8×`` of the saved anchor distance.
 
 Error budget and assumptions
 ----------------------------
