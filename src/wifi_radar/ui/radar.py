@@ -29,41 +29,58 @@ SCALE_PRESETS = [
 
 ASPECT = 0.48  # terminal character aspect ratio (height/width)
 
+# Hysteresis for auto-scale (avoid ring preset flipping every scan)
+_LAST_SCALE_MAX_M: float | None = None
 
-def _pick_scale(devices: list[WifiDevice]) -> tuple[list[tuple[float, str]], float, float]:
-    """Choose ring scale based on farthest device distance.
 
-    Returns (ring_defs, min_rssi, max_rssi) where ring_defs are
-    (fraction, label) tuples and the RSSI range maps to the chosen scale.
+def _pick_scale(
+    devices: list[WifiDevice],
+) -> tuple[list[tuple[float, str]], float]:
+    """Choose ring scale from farthest estimated distance.
+
+    Returns (ring_defs, scale_max_m) for mapping distance_m() to radius.
     """
+    global _LAST_SCALE_MAX_M  # noqa: PLW0603
+
     if not devices:
-        return SCALE_PRESETS[1][1], -95.0, -25.0
+        threshold = _LAST_SCALE_MAX_M or 30.0
+        for t, rings in SCALE_PRESETS:
+            if t == threshold or (_LAST_SCALE_MAX_M is None and t == 30):
+                return rings, float(t)
+        return SCALE_PRESETS[1][1], 30.0
 
     max_dist = max(d.distance_m() for d in devices)
 
-    for threshold, rings in SCALE_PRESETS:
+    chosen = SCALE_PRESETS[-1][0]
+    rings = SCALE_PRESETS[-1][1]
+    for threshold, ring_defs in SCALE_PRESETS:
         if max_dist <= threshold * 1.1:
-            # Map RSSI range to this scale's max distance
-            # Closer max_rssi for tighter scales
-            if threshold <= 10:
-                return rings, -70.0, -25.0
-            elif threshold <= 30:
-                return rings, -85.0, -25.0
-            elif threshold <= 100:
-                return rings, -95.0, -25.0
-            else:
-                return rings, -100.0, -25.0
+            chosen = threshold
+            rings = ring_defs
+            break
 
-    # Default to largest scale
-    return SCALE_PRESETS[-1][1], -100.0, -25.0
+    # Hysteresis: only switch preset if clearly outside current band
+    if _LAST_SCALE_MAX_M is not None and chosen != _LAST_SCALE_MAX_M:
+        zoom_out = max_dist > _LAST_SCALE_MAX_M * 1.25 and chosen > _LAST_SCALE_MAX_M
+        zoom_in = max_dist < _LAST_SCALE_MAX_M * 0.45 and chosen < _LAST_SCALE_MAX_M
+        if zoom_out or zoom_in:
+            _LAST_SCALE_MAX_M = float(chosen)
+        else:
+            for threshold, ring_defs in SCALE_PRESETS:
+                if threshold == _LAST_SCALE_MAX_M:
+                    return ring_defs, float(_LAST_SCALE_MAX_M)
+    else:
+        _LAST_SCALE_MAX_M = float(chosen)
+
+    return rings, float(_LAST_SCALE_MAX_M)
 
 
-def rssi_to_radius(rssi: float, max_radius: float,
-                   min_rssi: float = -95.0, max_rssi: float = -25.0) -> float:
-    """Map RSSI to distance from center (stronger = closer)."""
-    clamped = max(min_rssi, min(max_rssi, rssi))
-    t = (clamped - min_rssi) / (max_rssi - min_rssi)
-    return max_radius * (1.0 - t)
+def distance_to_radius(distance_m: float, scale_max_m: float, max_radius: float) -> float:
+    """Map estimated metres to polar radius (centre = you, edge = scale_max_m)."""
+    if scale_max_m <= 0:
+        return max_radius
+    t = min(1.0, max(0.0, distance_m / scale_max_m))
+    return max_radius * t
 
 
 def _draw_ring(
@@ -145,7 +162,7 @@ def draw_radar(
     _draw_crosshair(stdscr, cx, cy, max_r, max_y, max_x)
 
     # Auto-scale rings based on device distances
-    ring_defs, scale_min_rssi, scale_max_rssi = _pick_scale(devices)
+    ring_defs, scale_max_m = _pick_scale(devices)
 
     # Draw range rings
     for ring_frac, label in ring_defs:
@@ -199,7 +216,7 @@ def draw_radar(
     for dev in devices[:40]:
         bearing = (dev.display_bearing() - heading) % 360.0
         rad = math.radians(bearing - 90)
-        dist = rssi_to_radius(dev.rssi_dbm, max_r, scale_min_rssi, scale_max_rssi)
+        dist = distance_to_radius(dev.distance_m(), scale_max_m, max_r)
         x = int(cx + dist * math.cos(rad))
         y = int(cy + dist * math.sin(rad) * ASPECT)
         if not (0 < y < max_y - panel_h and 1 < x < max_x - 2):
@@ -241,7 +258,7 @@ def draw_radar(
 
     # Key hints
     try:
-        keys = "h/l=hdg  j/k=sel  q=quit  r=rescan  m=mon  c=cal  :=cmd  ?=help"
+        keys = "h/l=hdg j/k=sel 4/6/8/2=pin D/d=dist q=quit ?=help"
         stdscr.addstr(panel_y + 3, 1, keys[: max_x - 3], curses.A_DIM)
     except curses.error:
         pass
@@ -252,8 +269,8 @@ def draw_radar(
         if sel:
             conf = (
                 f"{sel.bearing_confidence * 100:.0f}%"
-                if sel.bearing_deg is not None
-                else "uncal"
+                if sel.bearing_deg is not None and not sel.bearing_manual
+                else ("manual" if sel.bearing_manual else "uncal")
             )
             detail = (
                 f" {sel.mac}  {sel.kind.value}  "
