@@ -21,9 +21,23 @@ It estimates distance from RSSI and direction from calibration.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Theory
+   :caption: RF Capability
 
-   theory/index
+   theory/overview
+   theory/hardware
+   theory/receiver
+   theory/band-rejection
+   theory/firmware
+   theory/spectral-scan
+   theory/csi-and-iq
+   theory/capability-matrix
+   theory/tiers
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Localization & Ranging
+
+   theory/localization
 
 .. toctree::
    :maxdepth: 2
