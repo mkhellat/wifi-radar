@@ -44,6 +44,7 @@ class ScanWorker:
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self.status = "Starting..."
         self.mon_enabled = self.use_monitor
+        self.scan_generation = 0
 
     def start(self) -> None:
         self._thread.start()
@@ -78,6 +79,7 @@ class ScanWorker:
                 if v:
                     d.vendor = v
             self.store.merge(devices)
+            self.scan_generation += 1
             self.status = f"Scan: {len(devices)} APs ({time.strftime('%H:%M:%S')})"
         except Exception as exc:  # noqa: BLE001
             self.status = f"Scan error: {exc}"

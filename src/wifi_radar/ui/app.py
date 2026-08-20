@@ -18,19 +18,29 @@ class BearingCalibrator:
         self.active = False
         self.started_at = 0.0
         self._samples: dict[str, list[tuple[float, float]]] = {}
+        self._last_scan_generation = -1
 
     def start(self) -> None:
         self.active = True
         self.started_at = time.time()
         self._samples.clear()
+        self._last_scan_generation = -1
 
     def stop(self) -> None:
         self.active = False
 
-    def feed(self, heading: float, devices: list[WifiDevice], last_scan_time: float) -> None:
-        """Record samples only when fresh scan data arrived."""
+    def feed(
+        self,
+        heading: float,
+        devices: list[WifiDevice],
+        scan_generation: int,
+    ) -> None:
+        """Record one sample per fresh iw scan (not every UI frame)."""
         if not self.active:
             return
+        if scan_generation == self._last_scan_generation:
+            return
+        self._last_scan_generation = scan_generation
         for dev in devices:
             self._samples.setdefault(dev.mac, []).append(
                 (heading % 360.0, dev.rssi_dbm)
@@ -39,14 +49,18 @@ class BearingCalibrator:
     def apply(self, store: DeviceStore) -> None:
         """Set bearing for devices with enough samples."""
         for mac, points in self._samples.items():
-            if len(points) < 6:
+            if store.calibration.manual_bearing(mac) is not None:
                 continue
+            if len(points) < 4:
+                continue
+            spread = max(p[1] for p in points) - min(p[1] for p in points)
+            if spread < 5.0:
+                continue  # omnidirectional / too close — bearing not observable
             best_bearing, _ = max(points, key=lambda p: p[1])
             dev = store.devices.get(mac)
             if dev is None:
                 continue
             dev.bearing_deg = best_bearing
-            spread = max(p[1] for p in points) - min(p[1] for p in points)
             dev.bearing_confidence = min(1.0, spread / 20.0)
 
 
@@ -64,6 +78,41 @@ COMMANDS: dict[str, str] = {
     "h": "help",
     "help": "help",
 }
+
+
+def _pin_bearing(
+    store: DeviceStore,
+    worker: ScanWorker,
+    mac: str,
+    heading: float,
+    offset_deg: float,
+) -> None:
+    """Pin world bearing for a device relative to current heading."""
+    bearing = (heading + offset_deg) % 360.0
+    store.calibration.set_manual_bearing(mac, bearing)
+    dev = store.devices.get(mac)
+    label = dev.label if dev else mac
+    if dev:
+        dev.bearing_deg = bearing
+        dev.bearing_manual = True
+        dev.bearing_confidence = 1.0
+    worker.status = f"Pinned {label} at {bearing:.0f}° (manual)"
+
+
+def _calibrate_distance(
+    store: DeviceStore,
+    worker: ScanWorker,
+    mac: str,
+    distance_m: float,
+) -> None:
+    dev = store.devices.get(mac)
+    if dev is None:
+        return
+    ref = store.calibration.set_distance_reference(mac, dev.rssi_dbm, distance_m)
+    worker.status = (
+        f"Calibrated {dev.label} at ~{distance_m:.2f}m "
+        f"(RSSI {dev.rssi_dbm:.0f} dBm, ref {ref:.0f})"
+    )
 
 
 HELP_LINES = [
@@ -86,6 +135,14 @@ HELP_LINES = [
     "  m             Toggle monitor mode on/off",
     "  c             Start/stop bearing calibration",
     "  ?             Show this help screen",
+    "",
+    "SELECTED DEVICE (pin bearing / distance)",
+    "  8             AP is ahead (forward)",
+    "  4             AP is on your left",
+    "  6             AP is on your right",
+    "  2             AP is behind you",
+    "  D             Calibrate distance at ~0.25m (arm's length)",
+    "  d             Calibrate distance at ~1m",
     "",
     "COMMAND MODE (vi-style)",
     "  :             Enter command mode",
@@ -212,7 +269,7 @@ def run_app(iface: str, use_monitor: bool) -> int:
             devices = store.snapshot()
 
             if calibrator.active:
-                calibrator.feed(heading, devices, time.time())
+                calibrator.feed(heading, devices, worker.scan_generation)
                 if time.time() - calibrator.started_at > 25:
                     calibrator.stop()
                     calibrator.apply(store)
@@ -341,6 +398,20 @@ def run_app(iface: str, use_monitor: bool) -> int:
             elif key_int == ord("G"):
                 if devices:
                     selected_mac = devices[-1].mac
+
+            # Manual bearing / distance (requires selection)
+            elif selected_mac and key_int == ord("8"):
+                _pin_bearing(store, worker, selected_mac, heading, 0.0)
+            elif selected_mac and key_int == ord("4"):
+                _pin_bearing(store, worker, selected_mac, heading, -90.0)
+            elif selected_mac and key_int == ord("6"):
+                _pin_bearing(store, worker, selected_mac, heading, 90.0)
+            elif selected_mac and key_int == ord("2"):
+                _pin_bearing(store, worker, selected_mac, heading, 180.0)
+            elif selected_mac and key_int == ord("D"):
+                _calibrate_distance(store, worker, selected_mac, 0.25)
+            elif selected_mac and key_int == ord("d"):
+                _calibrate_distance(store, worker, selected_mac, 1.0)
 
             # Toggle info
             elif key_int in (10, 13, curses.KEY_ENTER):
