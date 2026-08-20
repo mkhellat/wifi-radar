@@ -31,10 +31,14 @@ class WifiDevice:
     probe_ssids: list[str] = field(default_factory=list)
     associated_bssid: str = ""
     bearing_deg: float | None = None
+    bearing_override_deg: float | None = None
     bearing_confidence: float = 0.0
     bearing_manual: bool = False
     security: str = ""
     in_use: bool = False
+    distance_override_m: float | None = None
+    anchor_status: str = ""
+    correction_note: str = ""
 
     @property
     def label(self) -> str:
@@ -58,6 +62,8 @@ class WifiDevice:
         Uses the formula: d = 10^((RSSI_1m - RSSI) / (10*n))
         where RSSI_1m is a calibration constant for signal at 1 metre.
         """
+        if self.distance_override_m is not None:
+            return float(min(120.0, max(0.1, self.distance_override_m)))
         ref = self.rssi_at_1m_override if self.rssi_at_1m_override is not None else self.rssi_at_1m
         n = PATH_LOSS_EXPONENT_INDOOR
         if self.freq_mhz > 4000:
@@ -65,8 +71,13 @@ class WifiDevice:
         exponent = (ref - self.rssi_dbm) / (10.0 * n)
         return float(min(120.0, max(0.1, 10.0**exponent)))
 
-    def display_bearing(self) -> float:
-        if self.bearing_deg is not None:
-            return self.bearing_deg % 360.0
+    def placeholder_bearing(self) -> float:
         h = int(hashlib.md5(self.mac.encode()).hexdigest()[:8], 16)  # noqa: S324
         return float(h % 360)
+
+    def display_bearing(self) -> float:
+        if self.bearing_override_deg is not None:
+            return self.bearing_override_deg % 360.0
+        if self.bearing_deg is not None:
+            return self.bearing_deg % 360.0
+        return self.placeholder_bearing()
