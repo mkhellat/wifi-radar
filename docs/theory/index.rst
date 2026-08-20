@@ -1,5 +1,5 @@
-Theory
-======
+RF Theory and Localization
+==========================
 
 Radio-frequency capability and **localization geometry** (distance, bearing,
 display mapping) for wifi-radar.
