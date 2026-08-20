@@ -33,6 +33,24 @@ def test_manual_bearing_in_snapshot(tmp_path) -> None:
     assert snap[0].bearing_manual is True
 
 
+def test_clear_removes_saved_distance_and_bearing(tmp_path) -> None:
+    cal = CalibrationStore(path=tmp_path / "cal.json")
+    cal.set_distance_reference("aa:bb:cc:dd:ee:ff", -40.0, 1.0)
+    cal.set_manual_bearing("aa:bb:cc:dd:ee:ff", 90.0)
+    cal.clear("aa:bb:cc:dd:ee:ff")
+    assert cal.rssi_at_1m("aa:bb:cc:dd:ee:ff") is None
+    assert cal.manual_bearing("aa:bb:cc:dd:ee:ff") is None
+    assert cal.distance_anchor_m("aa:bb:cc:dd:ee:ff") is None
+
+
+def test_mode_persists(tmp_path) -> None:
+    path = tmp_path / "cal.json"
+    cal = CalibrationStore(path=path)
+    cal.set_mode("anchor")
+    reloaded = CalibrationStore(path=path)
+    assert reloaded.mode() == "anchor"
+
+
 def test_distance_to_radius_matches_detail_line() -> None:
     """Plot radius should track distance_m, not a separate RSSI mapping."""
     r = distance_to_radius(3.0, 10.0, 20)
