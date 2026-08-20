@@ -12,6 +12,7 @@ Package Layout
    ├── cli.py               Argument parsing, tool checks, entry point
    ├── models.py            WifiDevice dataclass, DeviceKind enum
    ├── merge.py             DeviceStore (EMA RSSI, TTL, merge logic)
+   ├── correction.py        Scene correction and anchor diagnostics
    ├── worker.py            Background scan thread
    ├── iface.py             Interface discovery, MonitorSession
    ├── oui.py               OUI vendor lookup and fetch
@@ -45,7 +46,8 @@ Data Flow
    ┌──────────────────────────────────────────────────┐
    │              UI Thread (curses)                   │
    │                                                   │
-   │  draw_radar() ← devices + heading + selection    │
+   │  apply_scene_corrections()                        │
+   │  draw_radar() ← corrected devices + selection     │
    │  key handling → heading, selection, commands      │
    └──────────────────────────────────────────────────┘
 
@@ -59,9 +61,14 @@ Key Design Decisions
 **Selection by MAC, not list index.**
   When RSSI changes cause re-sorting, the selected device stays selected.
 
-**EMA RSSI (α=0.4) replaces max-forever.**
+**EMA RSSI (α=0.25) replaces max-forever.**
   Devices move on the radar as signal strength changes. Stale devices expire
   after a configurable TTL (default 30 seconds).
+
+**Scene correction is layered after snapshot.**
+  Per-MAC calibration is applied in ``DeviceStore.snapshot()`` first, then
+  ``correction.py`` derives optional scene-wide distance/bearing adjustments
+  from visible anchors based on the active calibration mode.
 
 **Heading rotates the plot.**
   Device bearings are rendered as ``bearing - heading``, so "forward" (the

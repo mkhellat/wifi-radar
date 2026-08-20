@@ -92,14 +92,15 @@ wifi-radar --version
 | `r` | Force rescan |
 | `m` | Toggle monitor mode |
 | `c` | Start/stop bearing calibration |
+| `x` | Clear saved calibration for selected device |
 | `Esc` | Deselect |
 | `?` | Full-screen help overlay |
-| `:` | Enter command mode (`:q` `:r` `:m` `:c` `:help`) |
+| `:` | Enter command mode (`:q` `:r` `:m` `:c` `:x` `:mode honest` `:mode anchor` `:help`) |
 
 ## Distance & direction
 
 - **Distance** — log-distance path-loss model with reference RSSI at 1 m. Indoor accuracy is order-of-magnitude (metres), not GPS. Select a device and press `D` / `d` to calibrate at 0.25 m / 1 m (saved under `~/.cache/wifi_radar/calibration.json`).
-- **Direction** — manual pin with `4`/`6`/`8`/`2` (left/right/ahead/behind), rotation calibration (`c`), or MAC-hash placeholder. See [calibration guide](docs/user/calibration.rst) and the full [localization theory](docs/theory/localization.rst) (formulas, EMA, auto-scale, error budget).
+- **Direction** — manual pin with `4`/`6`/`8`/`2` (left/right/ahead/behind), rotation calibration (`c`), or MAC-hash placeholder. Scene correction modes (`:mode honest`, `:mode anchor`) control how one device's calibration influences others. See [calibration guide](docs/user/calibration.rst) and the full [localization theory](docs/theory/localization.rst) (formulas, EMA, auto-scale, error budget).
 
 ## Architecture
 
@@ -108,6 +109,7 @@ src/wifi_radar/
   cli.py          CLI entry point
   models.py       WifiDevice, DeviceKind
   merge.py        DeviceStore (EMA RSSI, TTL expiry)
+  correction.py   Scene-wide correction engine
   worker.py       Background scan thread
   iface.py        Interface discovery, MonitorSession
   oui.py          OUI vendor lookup/fetch
