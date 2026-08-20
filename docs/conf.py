@@ -15,12 +15,21 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
+    "sphinx.ext.mathjax",
     "sphinx_autodoc_typehints",
     "myst_parser",
 ]
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+
+# Fail the docs build on Sphinx warnings. Suppress only known pre-existing
+# noise from the RF capability Markdown report (TOC anchors + mermaid fences)
+# until that page is rewritten as proper RST.
+suppress_warnings = [
+    "myst.xref_missing",
+    "misc.highlighting_failure",
+]
 
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]

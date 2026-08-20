@@ -144,7 +144,7 @@ docs: $(INSTALL_STAMP) ## Build Sphinx HTML documentation
 		$(VENV_PIP) install -e ".[docs]" >/dev/null; \
 	fi
 	@printf '>>> Building documentation ...\n'
-	$(VENV_SPHINX) -b html docs docs/_build/html
+	$(VENV_SPHINX) -W --keep-going -b html docs docs/_build/html
 	@printf '>>> Docs built: docs/_build/html/index.html\n'
 
 .PHONY: docs-clean
