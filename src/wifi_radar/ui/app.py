@@ -136,76 +136,87 @@ def _clear_calibration(
     worker.status = f"Cleared calibration for {label}"
 
 
-HELP_LINES = [
-    "wifi-radar help",
-    "",
-    "NAVIGATION",
-    "  h / Left      Rotate heading left (5 deg)",
-    "  l / Right     Rotate heading right (5 deg)",
-    "  H             Rotate heading left fast (15 deg)",
-    "  L             Rotate heading right fast (15 deg)",
-    "  j / Down      Select next device (weaker signal)",
-    "  k / Up        Select previous device (stronger signal)",
-    "  g             Jump to first device (strongest)",
-    "  G             Jump to last device (weakest)",
-    "  Esc           Deselect current device",
-    "",
-    "ACTIONS",
-    "  q             Quit",
-    "  r             Force immediate rescan",
-    "  m             Toggle monitor mode on/off",
-    "  c             Start/stop bearing calibration",
-    "  ?             Show this help screen",
-    "",
-    "SELECTED DEVICE (pin bearing / distance)",
-    "  8             AP is ahead (forward)",
-    "  4             AP is on your left",
-    "  6             AP is on your right",
-    "  2             AP is behind you",
-    "  D             Calibrate distance at ~0.25m (arm's length)",
-    "  d             Calibrate distance at ~1m",
-    "  x             Release saved calibration for selection",
-    "",
-    "COMMAND MODE (vi-style)",
-    "  :             Enter command mode",
-    "  :q :quit      Quit",
-    "  :r :rescan    Force rescan",
-    "  :m :monitor   Toggle monitor",
-    "  :c :calib     Toggle calibration",
-    "  :x :clear     Release selected calibration",
-    "  :mode honest  Conservative global correction",
-    "  :mode anchor  Heuristic anchor propagation",
-    "  :h :help      Show help",
-    "  Esc           Cancel command",
-    "",
-    "DISPLAY LEGEND",
-    "  * (red)       Access point / hotspot",
-    "  o (green)     Associated client station",
-    "  . (yellow)    Probe-only adapter (searching)",
-    "  --- rings     Distance: inner ~3m, mid ~10m, outer ~30m",
-    "  N/E/S/W       Compass bearings (rotate with heading)",
-    "  ^ sweep       Your forward direction",
-    "",
-    "CALIBRATION",
-    "  Press c to start. Slowly rotate your laptop.",
-    "  Use h/l to set heading as you turn. After ~25s",
-    "  or press c again, calibration ends and devices",
-    "  are placed at their peak-signal bearing.",
-    "  Saved pin/dist cal persists; use x to release it.",
-    "",
-    "Press any key to return to radar",
-]
+def _build_help_lines(
+    selected_mac: str | None,
+    mode: CalibrationMode,
+) -> list[str]:
+    """Build help text with current context."""
+    selected_state = "selected device: yes" if selected_mac else "selected device: no"
+    mode_label = "anchor" if mode == "anchor" else "honest"
+    selected_actions = [
+        "  8 / 4 / 6 / 2  Pin ahead / left / right / behind",
+        "  D / d          Calibrate distance at ~0.25m / ~1m",
+        "  x              Release saved calibration",
+    ]
+    if not selected_mac:
+        selected_actions = [
+            "  Select a device with j / k first",
+            "  Then use pin / distance / clear actions",
+        ]
+    return [
+        "wifi-radar help",
+        f"mode: {mode_label}    {selected_state}",
+        "",
+        "NAVIGATION",
+        "  h / Left       Rotate heading left (5 deg)",
+        "  l / Right      Rotate heading right (5 deg)",
+        "  H / L          Rotate heading fast (15 deg)",
+        "  j / Down       Select next device (weaker)",
+        "  k / Up         Select previous device (stronger)",
+        "  g / G          Jump to first / last device",
+        "  Esc            Deselect or cancel command mode",
+        "",
+        "GLOBAL ACTIONS",
+        "  q              Quit",
+        "  r              Force immediate rescan",
+        "  m              Toggle monitor mode",
+        "  c              Start/stop bearing calibration",
+        "  ?              Show this help screen",
+        "",
+        "SELECTED DEVICE",
+        *selected_actions,
+        "",
+        "COMMAND MODE",
+        "  :q   :quit     Quit",
+        "  :r   :rescan   Force rescan",
+        "  :m   :monitor  Toggle monitor",
+        "  :c   :calib    Toggle calibration",
+        "  :x   :clear    Release selected calibration",
+        "  :mode honest   Conservative scene correction",
+        "  :mode anchor   Heuristic anchor propagation",
+        "  :h   :help     Show help overlay",
+        "",
+        "DISPLAY",
+        "  ◉ / ◎ / ○      AP / associated client / probe-only device",
+        "  rings          Auto-scaled distance reference rings",
+        "  N/E/S/W        Compass markers relative to heading",
+        "  ▲ sweep        Your forward direction",
+        "  <anchor>       Device contributes to scene correction",
+        "  <stale-cal>    Saved calibration rejected as stale",
+        "",
+        "CALIBRATION NOTES",
+        "  Rotation calibration needs visible RSSI variation.",
+        "  Manual pin and distance cal persist across runs.",
+        "  Use x or :clear when a calibrated device has moved.",
+        "",
+        "Press any key to return to radar",
+    ]
 
 
-def _show_help(stdscr: curses.window) -> None:
+def _show_help(
+    stdscr: curses.window,
+    selected_mac: str | None,
+    mode: CalibrationMode,
+) -> None:
     """Display full-screen help overlay with dynamic box."""
+    help_lines = _build_help_lines(selected_mac, mode)
     stdscr.erase()
     max_y, max_x = stdscr.getmaxyx()
 
     # Compute box dimensions
-    content_w = max(len(line) for line in HELP_LINES)
+    content_w = max(len(line) for line in help_lines)
     box_w = min(content_w + 4, max_x - 2)  # 2 border + 2 padding
-    box_h = min(len(HELP_LINES) + 2, max_y - 1)  # 2 border
+    box_h = min(len(help_lines) + 2, max_y - 1)  # 2 border
     inner_w = box_w - 4
     x0 = max(0, (max_x - box_w) // 2)
     y0 = max(0, (max_y - box_h) // 2)
@@ -223,8 +234,8 @@ def _show_help(stdscr: curses.window) -> None:
         y = y0 + 1 + i
         if y >= max_y - 1:
             break
-        if i < len(HELP_LINES):
-            text = HELP_LINES[i]
+        if i < len(help_lines):
+            text = help_lines[i]
             # Title line centered, section headers bold
             if i == 0:
                 pad_l = (inner_w - len(text)) // 2
@@ -238,7 +249,7 @@ def _show_help(stdscr: curses.window) -> None:
             row = "\u2502" + " " * (box_w - 2) + "\u2502"
         attr = curses.A_BOLD if i == 0 else 0
         # Draw separator before FOOTER
-        if i == len(HELP_LINES) - 2 and i > 0:
+        if i == len(help_lines) - 2 and i > 0:
             try:
                 stdscr.addstr(y, x0, mid[: max_x - x0 - 1], curses.A_DIM)
             except curses.error:
@@ -348,7 +359,7 @@ def run_app(iface: str, use_monitor: bool) -> int:
                             calibrator.start()
                             worker.status = "CALIBRATING: rotate slowly, h/l to turn"
                     elif action == "help":
-                        _show_help(stdscr)
+                        _show_help(stdscr, selected_mac, store.calibration.mode())
                     elif action == "clear":
                         if selected_mac:
                             _clear_calibration(store, worker, selected_mac)
@@ -465,7 +476,7 @@ def run_app(iface: str, use_monitor: bool) -> int:
 
             # Show help
             elif key_int == ord("?"):
-                _show_help(stdscr)
+                _show_help(stdscr, selected_mac, store.calibration.mode())
 
     try:
         curses.wrapper(curses_main)

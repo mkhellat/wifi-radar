@@ -2,7 +2,9 @@ Keyboard Controls
 =================
 
 wifi-radar uses vi-style single-key bindings. Arrow keys are supported as
-aliases. Press ``?`` at any time for a full-screen help overlay.
+aliases. Press ``?`` at any time for a full-screen help overlay. The overlay
+now groups actions by navigation, global actions, selected-device actions,
+command mode, and display status.
 
 Navigation
 ----------
@@ -53,6 +55,24 @@ Actions
      - Release saved calibration for the selected device
    * - ``?``
      - Show full-screen help overlay
+
+Selected Device Actions
+-----------------------
+
+These actions only make sense after selecting a device with ``j`` / ``k``.
+
+.. list-table::
+   :widths: 20 80
+   :header-rows: 1
+
+   * - Key
+     - Action
+   * - ``8`` / ``4`` / ``6`` / ``2``
+     - Pin device ahead / left / right / behind relative to current heading
+   * - ``D`` / ``d``
+     - Calibrate distance at ~0.25 m / ~1 m
+   * - ``x``
+     - Release saved calibration for the selected device
 
 Command Mode
 ------------
@@ -116,3 +136,4 @@ Radar Elements
   (visible whenever a device is selected)
 - **Anchor tags** — ``<anchor>`` or ``<stale-cal>`` when a selected device is
   acting as a scene anchor or has been rejected as stale
+- **Help header** — current calibration mode and whether a device is selected

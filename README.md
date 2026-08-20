@@ -97,6 +97,10 @@ wifi-radar --version
 | `?` | Full-screen help overlay |
 | `:` | Enter command mode (`:q` `:r` `:m` `:c` `:x` `:mode honest` `:mode anchor` `:help`) |
 
+The help overlay groups controls by navigation, global actions, selected-device
+actions, command mode, and display state, and shows the current correction mode
+plus whether a device is selected.
+
 ## Distance & direction
 
 - **Distance** — log-distance path-loss model with reference RSSI at 1 m. Indoor accuracy is order-of-magnitude (metres), not GPS. Select a device and press `D` / `d` to calibrate at 0.25 m / 1 m (saved under `~/.cache/wifi_radar/calibration.json`).
