@@ -98,8 +98,8 @@ wifi-radar --version
 
 ## Distance & direction
 
-- **Distance** — log-distance path-loss model with reference RSSI at 1 m. Indoor accuracy is order-of-magnitude (metres), not GPS.
-- **Direction** — requires calibration: press `c`, slowly rotate your laptop, use `←`/`→` to set heading. The tool records RSSI vs heading and places devices toward their strongest signal. Without calibration, devices sit at a stable pseudo-angle from MAC hash.
+- **Distance** — log-distance path-loss model with reference RSSI at 1 m. Indoor accuracy is order-of-magnitude (metres), not GPS. Select a device and press `D` / `d` to calibrate at 0.25 m / 1 m (saved under `~/.cache/wifi_radar/calibration.json`).
+- **Direction** — manual pin with `4`/`6`/`8`/`2` (left/right/ahead/behind), rotation calibration (`c`), or MAC-hash placeholder. See [calibration guide](docs/user/calibration.rst) and the full [localization theory](docs/theory/localization.rst) (formulas, EMA, auto-scale, error budget).
 
 ## Architecture
 
