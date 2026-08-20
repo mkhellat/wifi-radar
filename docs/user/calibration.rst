@@ -6,6 +6,7 @@ wifi-radar supports three related mechanisms:
 1. **MAC-hash bearing** (default) — stable display layout, no physical meaning
 2. **Rotation calibration** (``c``) — RSSI vs heading during a slow turn
 3. **Manual pin + distance reference** (selected device) — persisted to disk
+4. **Scene correction mode** — how saved calibration affects other devices
 
 Full formulas and constants are in :doc:`../theory/localization`.
 
@@ -106,6 +107,47 @@ With a device selected:
 Use when you know the physical distance (e.g. AP on the desk beside you).
 This adjusts the per-MAC ``RSSI at 1 m`` reference used by ``distance_m()``.
 
+Release / clear saved calibration
+---------------------------------
+
+With a device selected, press ``x`` to remove its saved:
+
+- manual bearing
+- distance reference
+- distance anchor
+
+The next snapshot falls back to the default distance model and MAC-hash
+bearing unless a fresh rotation/manual calibration is applied.
+
+Calibration modes
+-----------------
+
+Saved calibration can also influence **other** devices through a scene
+correction layer. Select the mode with command mode:
+
+- ``:mode honest`` — conservative / RF-honest default
+- ``:mode anchor`` — stronger heuristic anchor propagation
+
+RF-honest mode
+~~~~~~~~~~~~~~
+
+- The calibrated MAC keeps its own saved bearing and/or distance reference.
+- New devices may inherit a **global distance scale** if currently visible
+  anchors agree.
+- New devices do **not** receive a fabricated physical bearing from one
+  unrelated calibration point.
+- If a saved anchor no longer matches the scene well, it is marked
+  ``stale-cal`` and excluded from scene correction.
+
+Anchored-scene mode
+~~~~~~~~~~~~~~~~~~~
+
+- Visible calibrated devices are treated as anchors for the current scene.
+- New devices inherit both a global **distance scale** and a heuristic
+  **bearing offset** derived from those anchors.
+- This can produce a more intuitive whole-scene layout during testing, but it
+  is a heuristic display model, not true angle-of-arrival measurement.
+
 Calibration file
 ----------------
 
@@ -117,12 +159,16 @@ Fields:
 
 - ``rssi_at_1m`` — MAC → reference dBm at 1 m
 - ``manual_bearing`` — MAC → world bearing in degrees
+- ``distance_anchor_m`` — MAC → the calibrated target distance used as an anchor
+- ``mode`` — ``honest`` or ``anchor``
 
 Tips for good results
 ---------------------
 
 - **Close or omnidirectional sources:** prefer **manual pin** and **D** / ``d``
   over rotation calibration.
+- If a device has moved since calibration, press ``x`` and recalibrate it
+  instead of assuming the old anchor is still valid.
 - **Directional antenna** (USB dongle with external antenna) improves rotation
   calibration more than a flat laptop lid.
 - **Rotate slowly** and keep the environment stable (fewer people/doors moving).

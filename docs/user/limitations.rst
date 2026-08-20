@@ -23,6 +23,8 @@ Factors that degrade accuracy:
 - A single calibration point does not characterise the whole environment
 - **Very close** sources break the far-field assumption; sub-metre truth from
   RSSI alone is unreliable
+- Scene-wide correction can improve relative layout, but it is still derived
+  from RSSI heuristics rather than geometric ranging
 
 The radar **ring labels** follow an auto-scaled preset (10 / 30 / 100 / 300 m
 max) with hysteresis so rings do not flicker. Rings describe **display
@@ -43,6 +45,11 @@ angle-of-arrival without a phased array.
 **Manual pin (``4`` / ``6`` / ``8`` / ``2``):** the reliable way to mark
 direction when you know where a device physically is. Persisted in
 ``~/.cache/wifi_radar/calibration.json``.
+
+**Scene correction modes:** ``:mode honest`` may scale new-device distances
+from agreeing anchors, while ``:mode anchor`` may also rotate uncalibrated
+bearings heuristically. The latter is useful for testing but should not be
+interpreted as true angle-of-arrival.
 
 MAC randomisation
 -----------------

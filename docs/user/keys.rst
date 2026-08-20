@@ -49,6 +49,8 @@ Actions
      - Toggle monitor-mode sampling on/off
    * - ``c``
      - Start/stop bearing calibration
+   * - ``x``
+     - Release saved calibration for the selected device
    * - ``?``
      - Show full-screen help overlay
 
@@ -72,6 +74,12 @@ status line. Type a command and press Enter. Press Esc to cancel.
      - Toggle monitor mode
    * - ``:c`` / ``:calib``
      - Start/stop calibration
+   * - ``:x`` / ``:clear``
+     - Release selected-device saved calibration
+   * - ``:mode honest``
+     - Conservative scene correction (distance only when anchors agree)
+   * - ``:mode anchor``
+     - Heuristic anchor propagation for both distance and bearing
    * - ``:h`` / ``:help``
      - Show help overlay
 
@@ -106,3 +114,5 @@ Radar Elements
 - **Device count** — shown in the status panel when nothing is selected
 - **Detail line** — MAC, kind, channel, RSSI, distance, bearing, vendor
   (visible whenever a device is selected)
+- **Anchor tags** — ``<anchor>`` or ``<stale-cal>`` when a selected device is
+  acting as a scene anchor or has been rejected as stale
