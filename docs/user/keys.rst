@@ -137,3 +137,6 @@ Radar Elements
 - **Anchor tags** — ``<anchor>`` or ``<stale-cal>`` when a selected device is
   acting as a scene anchor or has been rejected as stale
 - **Help header** — current calibration mode and whether a device is selected
+- **Footer key hints** — change depending on whether a device is selected:
+  global movement/command hints otherwise, selected-device pin/distance/clear
+  hints when a device is active

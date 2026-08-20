@@ -101,6 +101,10 @@ The help overlay groups controls by navigation, global actions, selected-device
 actions, command mode, and display state, and shows the current correction mode
 plus whether a device is selected.
 
+The live footer hints are also context-sensitive: when nothing is selected they
+focus on movement, scan, and command controls; when a device is selected they
+switch to pin, distance-calibration, and clear-calibration actions.
+
 ## Distance & direction
 
 - **Distance** — log-distance path-loss model with reference RSSI at 1 m. Indoor accuracy is order-of-magnitude (metres), not GPS. Select a device and press `D` / `d` to calibrate at 0.25 m / 1 m (saved under `~/.cache/wifi_radar/calibration.json`).

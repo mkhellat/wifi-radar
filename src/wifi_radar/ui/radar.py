@@ -256,9 +256,18 @@ def draw_radar(
     except curses.error:
         pass
 
-    # Key hints
+    # Key hints (context-sensitive: global vs selected-device actions)
     try:
-        keys = "h/l=hdg j/k=sel 4/6/8/2=pin D/d=dist x=clear q=quit ?=help"
+        if selected_mac:
+            keys = (
+                "8/4/6/2=pin  D/d=dist  x=clear  "
+                "j/k=next/prev  Enter/Esc=deselect  ?=help"
+            )
+        else:
+            keys = (
+                "h/l=hdg  j/k=select  g/G=first/last  "
+                "r=rescan  m=monitor  c=calib  :=cmd  q=quit  ?=help"
+            )
         stdscr.addstr(panel_y + 3, 1, keys[: max_x - 3], curses.A_DIM)
     except curses.error:
         pass
@@ -295,7 +304,10 @@ def draw_radar(
                 pass
     else:
         try:
-            cnt = f" {len(devices)} device(s)"
+            cnt = (
+                f" {len(devices)} device(s)  "
+                "select with j/k for pin, distance, and clear actions"
+            )
             stdscr.addstr(panel_y + 4, 1, cnt, curses.A_DIM)
         except curses.error:
             pass
