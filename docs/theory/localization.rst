@@ -261,15 +261,15 @@ visible anchor residuals:
 
 .. math::
 
-   s_i = d_{\\mathrm{target},i} / d_{\\mathrm{raw},i}
+   s_i = d_{\mathrm{target},i} / d_{\mathrm{raw},i}
 
 .. math::
 
-   s = \\mathrm{median}(s_i)
+   s = \mathrm{median}(s_i)
 
 .. math::
 
-   d_{\\mathrm{scene}} = s \\cdot d_{\\mathrm{raw}}
+   d_{\mathrm{scene}} = s \cdot d_{\mathrm{raw}}
 
 This mode does **not** globally invent physical bearing for unrelated devices.
 
@@ -281,18 +281,18 @@ bearing offset from anchors with saved manual bearing:
 
 .. math::
 
-   \\Delta\\theta_i = \\theta_{\\mathrm{manual},i} - \\theta_{\\mathrm{placeholder},i}
+   \Delta\theta_i = \theta_{\mathrm{manual},i} - \theta_{\mathrm{placeholder},i}
 
 .. math::
 
-   \\Delta\\theta = \\mathrm{median}(\\Delta\\theta_i)
+   \Delta\theta = \mathrm{median}(\Delta\theta_i)
 
 For uncalibrated devices:
 
 .. math::
 
-   \\theta_{\\mathrm{scene}} =
-   \\theta_{\\mathrm{placeholder}} + \\Delta\\theta
+   \theta_{\mathrm{scene}} =
+   \theta_{\mathrm{placeholder}} + \Delta\theta
 
 This is intentionally a **display heuristic**, not angle-of-arrival physics.
 
