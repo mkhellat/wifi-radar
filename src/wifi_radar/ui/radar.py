@@ -258,7 +258,7 @@ def draw_radar(
 
     # Key hints
     try:
-        keys = "h/l=hdg j/k=sel 4/6/8/2=pin D/d=dist q=quit ?=help"
+        keys = "h/l=hdg j/k=sel 4/6/8/2=pin D/d=dist x=clear q=quit ?=help"
         stdscr.addstr(panel_y + 3, 1, keys[: max_x - 3], curses.A_DIM)
     except curses.error:
         pass
@@ -278,6 +278,10 @@ def draw_radar(
                 f"{sel.rssi_dbm:.0f}dBm  ~{sel.distance_m():.1f}m  "
                 f"brg {sel.display_bearing():.0f}\u00b0({conf})"
             )
+            if sel.anchor_status:
+                detail += f"  <{sel.anchor_status}>"
+            if sel.correction_note:
+                detail += f"  [{sel.correction_note}]"
             if sel.vendor:
                 detail += f"  [{sel.vendor}]"
             if sel.label:

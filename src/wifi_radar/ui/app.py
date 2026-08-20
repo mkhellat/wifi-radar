@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import curses
 import time
+from typing import cast
 
+from wifi_radar.calibration import CalibrationMode
+from wifi_radar.correction import apply_scene_corrections
 from wifi_radar.merge import DeviceStore
 from wifi_radar.models import WifiDevice
 from wifi_radar.ui.radar import draw_radar
@@ -77,6 +80,8 @@ COMMANDS: dict[str, str] = {
     "calibrate": "calib",
     "h": "help",
     "help": "help",
+    "x": "clear",
+    "clear": "clear",
 }
 
 
@@ -115,6 +120,22 @@ def _calibrate_distance(
     )
 
 
+def _clear_calibration(
+    store: DeviceStore,
+    worker: ScanWorker,
+    mac: str,
+) -> None:
+    """Release saved distance/bearing calibration for one MAC."""
+    dev = store.devices.get(mac)
+    label = dev.label if dev else mac
+    store.calibration.clear(mac)
+    if dev is not None:
+        dev.bearing_deg = None
+        dev.bearing_manual = False
+        dev.bearing_confidence = 0.0
+    worker.status = f"Cleared calibration for {label}"
+
+
 HELP_LINES = [
     "wifi-radar help",
     "",
@@ -143,6 +164,7 @@ HELP_LINES = [
     "  2             AP is behind you",
     "  D             Calibrate distance at ~0.25m (arm's length)",
     "  d             Calibrate distance at ~1m",
+    "  x             Release saved calibration for selection",
     "",
     "COMMAND MODE (vi-style)",
     "  :             Enter command mode",
@@ -150,6 +172,9 @@ HELP_LINES = [
     "  :r :rescan    Force rescan",
     "  :m :monitor   Toggle monitor",
     "  :c :calib     Toggle calibration",
+    "  :x :clear     Release selected calibration",
+    "  :mode honest  Conservative global correction",
+    "  :mode anchor  Heuristic anchor propagation",
     "  :h :help      Show help",
     "  Esc           Cancel command",
     "",
@@ -166,6 +191,7 @@ HELP_LINES = [
     "  Use h/l to set heading as you turn. After ~25s",
     "  or press c again, calibration ends and devices",
     "  are placed at their peak-signal bearing.",
+    "  Saved pin/dist cal persists; use x to release it.",
     "",
     "Press any key to return to radar",
 ]
@@ -267,6 +293,7 @@ def run_app(iface: str, use_monitor: bool) -> int:
 
         while True:
             devices = store.snapshot()
+            devices, correction = apply_scene_corrections(devices, store.calibration)
 
             if calibrator.active:
                 calibrator.feed(heading, devices, worker.scan_generation)
@@ -276,7 +303,11 @@ def run_app(iface: str, use_monitor: bool) -> int:
                     worker.status = "Calibration complete"
 
             # Build status string
-            display_status = f":{command_buf}\u2588" if command_mode else worker.status
+            display_status = (
+                f":{command_buf}\u2588"
+                if command_mode
+                else f"{worker.status}  [{correction.short_label()}]"
+            )
 
             draw_radar(
                 stdscr, devices, heading, calibrator.active,
@@ -318,6 +349,18 @@ def run_app(iface: str, use_monitor: bool) -> int:
                             worker.status = "CALIBRATING: rotate slowly, h/l to turn"
                     elif action == "help":
                         _show_help(stdscr)
+                    elif action == "clear":
+                        if selected_mac:
+                            _clear_calibration(store, worker, selected_mac)
+                        else:
+                            worker.status = "Select a device first"
+                    elif cmd.startswith("mode "):
+                        mode = cmd.split(None, 1)[1].strip().lower()
+                        if mode in {"honest", "anchor"}:
+                            store.calibration.set_mode(cast(CalibrationMode, mode))
+                            worker.status = f"Calibration mode: {mode}"
+                        else:
+                            worker.status = f"Unknown mode: {mode}"
                     else:
                         worker.status = f"Unknown command: {cmd}"
                 elif key_int in (curses.KEY_BACKSPACE, 127, 8):
@@ -412,6 +455,8 @@ def run_app(iface: str, use_monitor: bool) -> int:
                 _calibrate_distance(store, worker, selected_mac, 0.25)
             elif selected_mac and key_int == ord("d"):
                 _calibrate_distance(store, worker, selected_mac, 1.0)
+            elif selected_mac and key_int in (ord("x"), ord("X")):
+                _clear_calibration(store, worker, selected_mac)
 
             # Toggle info
             elif key_int in (10, 13, curses.KEY_ENTER):
