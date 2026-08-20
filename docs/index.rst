@@ -10,7 +10,8 @@ It estimates distance from RSSI and direction from calibration.
    Passive observation only. No deauth, injection, association, or cracking.
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
+   :titlesonly:
    :caption: User Guide
 
    user/install
@@ -20,7 +21,8 @@ It estimates distance from RSSI and direction from calibration.
    user/limitations
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
+   :titlesonly:
    :caption: RF Capability
 
    theory/overview
@@ -34,13 +36,15 @@ It estimates distance from RSSI and direction from calibration.
    theory/tiers
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
+   :titlesonly:
    :caption: Localization & Ranging
 
    theory/localization
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
+   :titlesonly:
    :caption: Developer Guide
 
    dev/architecture
@@ -48,7 +52,8 @@ It estimates distance from RSSI and direction from calibration.
    dev/testing
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
+   :titlesonly:
    :caption: API Reference
 
    api/models
