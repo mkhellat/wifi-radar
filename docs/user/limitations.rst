@@ -1,33 +1,50 @@
 Known Limitations
 =================
 
-Distance Accuracy
+This page summarises practical limits. For equations, constants, and display
+mapping, see :doc:`../theory/localization`.
+
+Distance accuracy
 -----------------
 
-The distance estimate uses a log-distance path-loss model with a reference
-RSSI at 1 metre and an indoor path-loss exponent of 3.0. This gives
-**order-of-magnitude** accuracy (within a factor of 2–3) in typical indoor
-environments. It is not GPS-grade positioning.
+Distance uses a **log-distance path-loss** model with default reference RSSI
+at 1 m (−30 dBm APs, −35 dBm clients), indoor exponent *n* = 3.0 (+0.3 on
+5 GHz), EMA-smoothed RSSI (α = 0.25), and optional per-MAC calibration
+(``D`` / ``d`` keys).
+
+Typical indoor accuracy is **order-of-magnitude** (often within a factor of
+2–3 when calibrated at a known range). It is not GPS-grade positioning.
 
 Factors that degrade accuracy:
 
-- Walls, furniture, and human bodies absorb and reflect signals
-- Multipath causes constructive/destructive interference
-- Different APs have different actual TX power (assumed 20 dBm)
-- Different devices have different antenna gains
+- Walls, furniture, and bodies absorb and reflect signals
+- Multipath causes rapid RSSI swings (10–30 dB is common)
+- Actual TX power and antenna gain differ per device (defaults assume “typical”)
+- A single calibration point does not characterise the whole environment
+- **Very close** sources break the far-field assumption; sub-metre truth from
+  RSSI alone is unreliable
 
-Bearing Accuracy
+The radar **ring labels** follow an auto-scaled preset (10 / 30 / 100 / 300 m
+max) with hysteresis so rings do not flicker. Rings describe **display
+geometry**; the numeric distance in the detail line always uses the same
+``distance_m()`` formula as dot placement.
+
+Bearing accuracy
 ----------------
 
-Without calibration, bearing is a stable pseudo-angle with no physical meaning.
+**Without calibration:** bearing is a MAC-hash placeholder — stable on screen,
+no geographic meaning.
 
-With calibration:
+**Rotation calibration (``c``):** requires ≥ 5 dB RSSI variation across
+headings; omnidirectional antennas and close sources often fail this gate.
+Indoor multipath creates false peaks. A single radio cannot measure true
+angle-of-arrival without a phased array.
 
-- Omnidirectional antennas provide minimal directional information
-- Indoor multipath creates false peaks
-- A single radio cannot measure true angle-of-arrival without a phased array
+**Manual pin (``4`` / ``6`` / ``8`` / ``2``):** the reliable way to mark
+direction when you know where a device physically is. Persisted in
+``~/.cache/wifi_radar/calibration.json``.
 
-MAC Randomisation
+MAC randomisation
 -----------------
 
 Modern phones and laptops randomise their MAC address when scanning for
@@ -37,16 +54,16 @@ networks. This means:
 - Vendor lookup returns "locally administered" / "random MAC"
 - Device tracking across sessions is not possible for randomised MACs
 
-Channel Coverage
+Channel coverage
 ----------------
 
-- ``iw scan`` performs a managed scan that hops through all supported channels.
+- ``iw scan`` performs a managed scan that hops through supported channels.
   This is not instantaneous; quiet devices may be missed.
 - Monitor mode (``airodump-ng``) with ``--band abg`` covers both 2.4 and 5 GHz
   but brief samples may miss infrequent transmitters.
 - Your own machine's traffic dominates when associated on the same channel.
 
-Interface Conflicts
+Interface conflicts
 -------------------
 
 - Creating a monitor VIF while NetworkManager manages the same PHY can cause
@@ -55,15 +72,15 @@ Interface Conflicts
 - If you experience issues, stop NetworkManager on the interface before running,
   or use ``--no-monitor``.
 
-5 GHz and DFS Channels
------------------------
+5 GHz and DFS channels
+----------------------
 
 - DFS (Dynamic Frequency Selection) channels (52–144) require radar detection.
   The kernel may not allow scanning on these channels without a CAC period.
 - Channels marked "no IR" (no initiate radiation) cannot be used for active
   probing but are visible in passive scans.
 
-Terminal Size
+Terminal size
 -------------
 
 The radar display requires at least 40 columns and 10 rows. Smaller terminals

@@ -1,54 +1,131 @@
-Bearing Calibration
-===================
+Calibration
+===========
 
-By default, devices are placed at a **pseudo-random but stable angle** derived
-from a hash of their MAC address. This provides a consistent layout but does
-not reflect true physical direction.
+wifi-radar supports three related mechanisms:
 
-To determine actual bearing, wifi-radar supports **rotation calibration**.
+1. **MAC-hash bearing** (default) — stable display layout, no physical meaning
+2. **Rotation calibration** (``c``) — RSSI vs heading during a slow turn
+3. **Manual pin + distance reference** (selected device) — persisted to disk
 
-How It Works
-------------
+Full formulas and constants are in :doc:`../theory/localization`.
 
-1. Press ``c`` to start calibration mode (status bar shows "CALIBRATING").
-2. **Slowly rotate your laptop** (or the antenna) through a full circle.
-3. Use ``←`` / ``→`` to set your current heading as you rotate.
-4. The tool records RSSI for each device at each heading angle.
-5. After ~25 seconds (or press ``c`` again to stop early), calibration ends.
-6. Each device is placed at the heading where its signal was strongest.
+Default layout (no calibration)
+-------------------------------
 
-The **bearing confidence** (shown as a percentage in the detail line) reflects
-how much RSSI variation was observed during rotation:
+Without calibration, each device is placed at a **pseudo-random but stable
+angle** derived from a hash of its MAC address. The detail line shows
+``uncal`` for bearing confidence.
 
-- High confidence: strong directional pattern (>20 dB spread)
-- Low confidence: omnidirectional or too few samples
+This keeps the polar view readable (no overlap) and deterministic across
+restarts, but **does not reflect true direction**.
 
-Requirements for Good Results
------------------------------
+Rotation bearing calibration
+----------------------------
 
-- **Directional antenna** gives the best results (USB dongle with external
-  antenna, or a laptop with asymmetric antenna placement).
-- **Rotate slowly**: the tool samples every ~200 ms but scans update every
-  ~8 seconds. Fast rotation means stale RSSI at many angles.
-- **Stable environment**: moving people, doors opening, etc. add noise.
-- **Multiple devices**: calibration applies to all visible devices
-  simultaneously.
+Press ``c`` to start calibration (status bar shows ``CALIBRATING``).
 
-Limitations
------------
+Workflow
+~~~~~~~~
 
-- A single omnidirectional antenna provides little directional information.
-  The RSSI variation comes mainly from the laptop body shadowing the antenna.
-- Indoor multipath severely distorts bearing estimates. Results are best in
-  open areas or near windows.
-- Calibration applies per-session. It is not saved to disk.
+1. **Slowly rotate** your laptop or external antenna through as much of a
+   full circle as practical.
+2. Set your current **heading** with ``h`` / ``l`` (or ``←`` / ``→``) as you
+   turn — the sweep line always points “forward”.
+3. The calibrator records one ``(heading, RSSI)`` pair **per fresh background
+   scan** (not every UI frame), so rotation should be slow enough that scans
+   catch new angles.
+4. After **25 seconds**, or when you press ``c`` again, calibration stops.
+5. For each device (except manually pinned MACs), if enough variation was
+   seen, bearing is set to the heading where RSSI was **strongest**.
 
-Without Calibration
--------------------
+Quality gates
+~~~~~~~~~~~~~
 
-When uncalibrated, the detail line shows "uncal" instead of a confidence
-percentage. The pseudo-angle from MAC hash ensures:
+Rotation results are applied only when:
 
-- Devices do not overlap on the display
-- The same device always appears at the same angle between scans
-- The layout is deterministic (restart shows the same positions)
+- At least **4** samples were collected for that MAC
+- RSSI **spread** (max − min) is at least **5 dB**
+
+Otherwise the device keeps its previous bearing (often still MAC-hash).
+Omnidirectional sources and very close devices (e.g. a phone on the desk)
+often fail the 5 dB gate — use manual pin instead.
+
+**Bearing confidence** (detail line, as a percentage) is
+``min(100%, spread / 20 dB × 100%)`` for rotation-calibrated devices.
+
+Rotation calibration is **session-only**; it is not written to disk.
+
+Manual bearing pin (persisted)
+------------------------------
+
+Select a device (``j`` / ``k``), then pin its direction **relative to your
+current heading**:
+
+.. list-table::
+   :widths: 15 25 60
+   :header-rows: 1
+
+   * - Key
+     - Offset
+     - Meaning
+   * - ``8``
+     - 0°
+     - Device is **ahead**
+   * - ``6``
+     - +90°
+     - Device is to your **right**
+   * - ``4``
+     - −90°
+     - Device is to your **left**
+   * - ``2``
+     - 180°
+     - Device is **behind**
+
+World bearing = ``(current_heading + offset) mod 360°``.
+
+The detail line shows ``manual`` instead of a confidence percentage.
+Manual bearings are saved and survive restarts; rotation calibration will
+not overwrite them.
+
+Distance reference (persisted)
+------------------------------
+
+With a device selected:
+
+.. list-table::
+   :widths: 15 85
+   :header-rows: 1
+
+   * - Key
+     - Action
+   * - ``D``
+     - Calibrate so **current RSSI** maps to **0.25 m**
+   * - ``d``
+     - Calibrate so **current RSSI** maps to **1 m**
+
+Use when you know the physical distance (e.g. AP on the desk beside you).
+This adjusts the per-MAC ``RSSI at 1 m`` reference used by ``distance_m()``.
+
+Calibration file
+----------------
+
+Both distance references and manual bearings are stored in:
+
+``~/.cache/wifi_radar/calibration.json``
+
+Fields:
+
+- ``rssi_at_1m`` — MAC → reference dBm at 1 m
+- ``manual_bearing`` — MAC → world bearing in degrees
+
+Tips for good results
+---------------------
+
+- **Close or omnidirectional sources:** prefer **manual pin** and **D** / ``d``
+  over rotation calibration.
+- **Directional antenna** (USB dongle with external antenna) improves rotation
+  calibration more than a flat laptop lid.
+- **Rotate slowly** and keep the environment stable (fewer people/doors moving).
+- **Multiple devices** are calibrated together during rotation mode.
+
+See :doc:`limitations` for accuracy expectations.
