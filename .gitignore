@@ -18,4 +18,5 @@ Makefile
 .DS_Store
 .claude/settings.local.json
 CLAUDE.md
+CHECKPOINT.md
 .cursor/
