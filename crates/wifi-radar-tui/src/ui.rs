@@ -56,11 +56,17 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!(
-            "v{}  iface={}  backend={}  hdg={:.0}°  {}",
+            "v{}  iface={}  backend={}  hdg={:.0}°  mon={}{}  {}",
             env!("CARGO_PKG_VERSION"),
             app.iface,
             app.backend_label(),
             app.heading_deg,
+            if app.mon_enabled { "on" } else { "off" },
+            if app.bearing_calibrator.active() {
+                "  CALIB"
+            } else {
+                ""
+            },
             app.correction.short_label()
         )),
     ]);
