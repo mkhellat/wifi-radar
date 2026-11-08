@@ -11,5 +11,11 @@ readme = "README.md"
 name = "wifi_radar_native"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+# Enabled by maturin when building the extension module.
+extension-module = ["pyo3/extension-module"]
+
 [dependencies]
 wifi-radar-core = { workspace = true }
+pyo3 = { version = "0.23", features = ["abi3-py311"] }
