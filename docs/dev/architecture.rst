@@ -12,14 +12,20 @@ radar) until Ratatui reaches feature parity.
 
    crates/
      wifi-radar-core/     Models, DeviceStore, ScanBackend trait
-     wifi-radar-linux/    Interim IwCliBackend + Nl80211Backend stub
-     wifi-radar-tui/      Ratatui list MVP (--demo / -i)
+     wifi-radar-linux/    Nl80211Backend (GET_SCAN dump) + IwCliBackend fallback
+     wifi-radar-tui/      Ratatui list MVP (--demo / -i; nl80211 then iw)
      wifi-radar-py/       PyO3 module wifi_radar_native (maturin)
 
    src/wifi_radar/        Shipping Python app (curses + iw/airodump/tshark)
 
-**ScanBackend** exists in both stacks so nl80211 can replace the interim
-``iw`` CLI shim without rewriting merge or UI callers.
+**Direction of travel:** Rust is the long-term primary stack (core, linux
+RF, Ratatui). Python remains shipping until Ratatui polar/calibration
+parity; afterward it should shrink toward a thin ``wifi_radar_native``
+façade rather than a second full implementation.
+
+**ScanBackend** is shared in intent: Ratatui prefers genetlink
+``Nl80211Backend`` (cached GET_SCAN dump) and falls back to
+``IwCliBackend`` per pass on error. ``TRIGGER_SCAN`` is not wired yet.
 
 **DeviceStore** semantics (EMA α=0.25, TTL 30 s, strongest-first snapshot)
 are shared in intent: Rust ``wifi-radar-core`` for Ratatui/PyO3; Python
@@ -80,12 +86,13 @@ Rust MVP data flow
 
 .. code-block:: text
 
-   IwCliBackend / demo ──▶ DeviceStore (core) ──▶ snapshot()
-                                                    │
-                    ┌───────────────────────────────┼───────────────┐
-                    ▼                               ▼               ▼
-             wifi-radar-tui                  wifi_radar_native
-             (Ratatui list)                  (PyO3 dict rows)
+   demo ──────────────────────────────┐
+   Nl80211Backend (GET_SCAN dump) ────┼──▶ DeviceStore (core) ──▶ snapshot()
+   IwCliBackend (fallback on error) ──┘              │
+                    ┌────────────────────────────────┼───────────────┐
+                    ▼                                ▼               ▼
+             wifi-radar-tui                   wifi_radar_native
+             (Ratatui list)                   (PyO3 dict rows)
 
 Key design decisions
 --------------------
