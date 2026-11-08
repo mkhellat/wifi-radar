@@ -8,3 +8,4 @@ description = "Domain core for wifi-radar: models, store, calibration, scan trai
 readme = "README.md"
 
 [dependencies]
+md5 = "0.7"
