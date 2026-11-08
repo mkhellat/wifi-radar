@@ -39,6 +39,11 @@ impl DeviceStore {
         &self.devices
     }
 
+    /// Mutable access to one device by MAC (normalized).
+    pub fn device_mut(&mut self, mac: &str) -> Option<&mut WifiDevice> {
+        self.devices.get_mut(&normalize_mac(mac))
+    }
+
     /// Merge a scan batch into the store.
     pub fn merge(&mut self, incoming: impl IntoIterator<Item = WifiDevice>) {
         let now = now_unix();

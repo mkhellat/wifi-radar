@@ -4,6 +4,7 @@
 
 #![deny(missing_docs)]
 
+pub mod bearing_calib;
 pub mod calibration;
 pub mod correction;
 pub mod models;
@@ -11,6 +12,7 @@ pub mod scan;
 pub mod store;
 pub mod util;
 
+pub use bearing_calib::{BearingCalibrator, MIN_RSSI_SPREAD_DB, MIN_SAMPLES};
 pub use calibration::{CalibrationMode, CalibrationStore};
 pub use correction::{apply_scene_corrections, AnchorDiagnostic, CorrectionSummary};
 pub use models::{
