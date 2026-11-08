@@ -1,8 +1,10 @@
 # wifi-radar
 
-[![License: GPL v3+](https://img.shields.io/badge/license-GPL%20v3+-green.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Python: 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org)
-[![OS: Linux](https://img.shields.io/badge/os-Linux-yellow.svg)](https://kernel.org)
+[![CI](https://img.shields.io/github/actions/workflow/status/mkhellat/wifi-radar/ci.yml?branch=main&label=CI)](https://github.com/mkhellat/wifi-radar/actions/workflows/ci.yml)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![Platform: Linux](https://img.shields.io/badge/platform-Linux-yellow.svg)](https://kernel.org/)
 
 Interactive terminal radar that maps nearby **WiFi access points**, **associated clients**, and **probe-only adapters** on a polar display. Estimates distance from RSSI and direction from calibration or MAC-hash placeholder.
 
@@ -51,11 +53,10 @@ Run `./configure --help` for options and `make help` for all targets.
 
 ## Install (pip)
 
-```bash
-# From PyPI (when published)
-pip install wifi-radar
+Not on PyPI yet. Install from a clone (or use `./configure && make` above):
 
-# Editable install (without the build system)
+```bash
+# Editable install from the repository
 pip install -e ".[dev]"
 ```
 
@@ -119,9 +120,9 @@ interactive app until parity is reached.
 ```
 crates/
   wifi-radar-core/    Domain models, store, scan traits (Rust)
-  wifi-radar-linux/   nl80211 GET_SCAN dump + iw-cli fallback (Rust)
-  wifi-radar-tui/     Ratatui list MVP (`--demo` / `-i`; nl80211 then iw)
-  wifi-radar-py/      PyO3 `wifi_radar_native` (version + DeviceStore)
+  wifi-radar-linux/   nl80211 TRIGGER_SCAN + GET_SCAN dump, iw-cli fallback
+  wifi-radar-tui/     Ratatui polar + calib (`--demo` / `-i`; nl80211 then iw)
+  wifi-radar-py/      PyO3 `wifi_radar_native` (store, calibration, scene)
 
 src/wifi_radar/       Current Python app (curses TUI, iw/airodump/tshark)
   cli.py              CLI entry point
