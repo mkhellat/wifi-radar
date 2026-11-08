@@ -70,3 +70,8 @@ python_version = "3.11"
 strict = true
 packages = ["wifi_radar"]
 mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = "wifi_radar_native"
+ignore_missing_imports = true
+follow_untyped_imports = true
