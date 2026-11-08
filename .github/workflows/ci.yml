@@ -32,3 +32,14 @@ jobs:
 
       - name: Pytest
         run: pytest -v
+
+  rust-workspace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo test
+        run: cargo test --workspace
