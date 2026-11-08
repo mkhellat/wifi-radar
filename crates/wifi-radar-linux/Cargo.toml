@@ -8,4 +8,5 @@ description = "Linux RF backends for wifi-radar (nl80211 target; iw CLI shim)"
 readme = "README.md"
 
 [dependencies]
+neli = "0.7"
 wifi-radar-core = { workspace = true }
