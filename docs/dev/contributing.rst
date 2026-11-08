@@ -119,3 +119,17 @@ Include:
 
 Keep the PR scoped to one coherent theme (e.g. “nl80211 scan MVP”, not
 “nl80211 + polar TUI + multi-node”).
+
+Approving and self-approving
+----------------------------
+
+An approval — including **self-approval** when the author and approver
+are the same person or agent — must include a **review comment** with a
+plausible explanation of why the PR is safe to merge now.
+
+The comment should state what was reviewed, what verification was used
+(CI, ``cargo test``, ``sphinx-build -W``, etc.), and any residual risk
+explicitly accepted. A bare “LGTM” / empty approve is not enough.
+
+Prefer merge or rebase merges that preserve atomic commits on ``main``;
+do not squash a stack that was authored as separate reviewable steps.
