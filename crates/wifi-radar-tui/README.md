@@ -21,13 +21,15 @@ Commands: `:mode honest` / `:mode anchor` (persisted), `:r` rescan,
 With a device selected: `8`/`4`/`6`/`2` pin ahead/left/right/behind,
 `D`/`d` distance calib at 0.25 m / 1 m, `x` clear calibration
 (persisted under `~/.cache/wifi_radar/calibration.json` in live mode).
-Header shows the active calibration mode.
+Header shows scene-correction status (`mode=… anchors=… distx=…`).
 
 Live mode tries genetlink `nl80211` first; if that errors, the same pass
 falls back to `iw-cli`. Status line shows which backend won.
 
 The UI shows a **polar canvas** (rings, sweep, device glyphs) above the
 device table. Selection is by MAC (stable across RSSI re-sorts).
-Pin/distance calibration uses the shared Rust `CalibrationStore`.
+Pin/distance calibration uses the shared Rust `CalibrationStore`; each
+snapshot also runs `apply_scene_corrections` (honest distance scale /
+anchor bearing propagation).
 
 Passive observation only — no injection, deauth, or association.
