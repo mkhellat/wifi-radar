@@ -121,7 +121,7 @@ crates/
   wifi-radar-core/    Domain models, store, scan traits (Rust)
   wifi-radar-linux/   nl80211 target + interim iw shim (Rust)
   wifi-radar-tui/     Ratatui primary UI (`--demo` / `-i`, list MVP)
-  wifi-radar-py/      PyO3 / Maturin façade (stub)
+  wifi-radar-py/      PyO3 `wifi_radar_native` (version + DeviceStore)
 
 src/wifi_radar/       Current Python app (curses TUI, iw/airodump/tshark)
   cli.py              CLI entry point
