@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "wifi-radar-native"
+version = "0.1.0"
+description = "PyO3 façade exposing wifi-radar Rust core (version + DeviceStore snapshot)."
+requires-python = ">=3.11"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "wifi-radar contributors" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: System :: Networking :: Monitoring",
+]
+
+[project.urls]
+Homepage = "https://github.com/mkhellat/wifi-radar"
+
+[tool.maturin]
+manifest-path = "Cargo.toml"
+module-name = "wifi_radar_native"
+features = ["extension-module"]
