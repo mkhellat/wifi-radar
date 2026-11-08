@@ -34,8 +34,8 @@ Running checks
    make test
 
 Python checks must pass before submitting Python changes. Rust changes need
-``cargo test --workspace``. CI currently runs the Python matrix; keep local
-Cargo green when touching ``crates/``.
+``cargo test --workspace``. CI runs the Python matrix plus a
+``rust-workspace`` job (``cargo test --workspace``).
 
 Code style
 ----------
