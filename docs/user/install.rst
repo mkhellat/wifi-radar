@@ -107,6 +107,7 @@ nl80211 GET_SCAN dump and falls back to ``iw`` if genetlink fails:
    pip install maturin
    maturin develop --features extension-module
    python -c "import wifi_radar_native as w; print(w.version())"
+   python -c "from wifi_radar import native_available; print(native_available())"
 
 See the crate READMEs under ``crates/wifi-radar-tui/`` and
 ``crates/wifi-radar-py/`` for keys and API details.
