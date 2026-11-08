@@ -2,7 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use wifi_radar_core::{CalibrationStore, DeviceStore, ScanBackend, ScanError, WifiDevice};
+use wifi_radar_core::{
+    CalibrationMode, CalibrationStore, DeviceStore, ScanBackend, ScanError, WifiDevice,
+};
 use wifi_radar_linux::{IwCliBackend, Nl80211Backend};
 
 use crate::polar::ScaleState;
@@ -35,6 +37,10 @@ pub struct App {
     pub scale: ScaleState,
     /// Per-MAC pin / distance calibration (Python JSON-compatible).
     pub calibration: CalibrationStore,
+    /// Vi-style `:` command entry is active.
+    pub command_mode: bool,
+    /// Buffer contents after the leading `:`.
+    pub command_buf: String,
     pub should_quit: bool,
     last_scan: Instant,
     scan_interval: Duration,
@@ -70,10 +76,89 @@ impl App {
             } else {
                 CalibrationStore::new(CalibrationStore::default_path())
             },
+            command_mode: false,
+            command_buf: String::new(),
             should_quit: false,
             last_scan: Instant::now() - Duration::from_secs(60),
             scan_interval: Duration::from_secs(8),
         }
+    }
+
+    /// Active calibration mode label (`honest` / `anchor`).
+    pub fn mode_label(&self) -> &'static str {
+        match self.calibration.mode() {
+            CalibrationMode::Honest => "honest",
+            CalibrationMode::Anchor => "anchor",
+        }
+    }
+
+    /// Enter vi-style command mode (`:`).
+    pub fn begin_command_mode(&mut self) {
+        self.command_mode = true;
+        self.command_buf.clear();
+    }
+
+    /// Cancel command mode without executing.
+    pub fn cancel_command_mode(&mut self) {
+        self.command_mode = false;
+        self.command_buf.clear();
+    }
+
+    /// Append a printable character to the command buffer.
+    pub fn command_push_char(&mut self, ch: char) {
+        if !self.command_mode || !ch.is_ascii() || ch.is_control() {
+            return;
+        }
+        self.command_buf.push(ch);
+    }
+
+    /// Backspace in command mode; leave command mode if buffer empties.
+    pub fn command_backspace(&mut self) {
+        if !self.command_mode {
+            return;
+        }
+        self.command_buf.pop();
+        if self.command_buf.is_empty() {
+            self.command_mode = false;
+        }
+    }
+
+    /// Execute the current command buffer (Python `:mode` / `:q` / `:r` parity subset).
+    pub fn execute_command(&mut self) {
+        if !self.command_mode {
+            return;
+        }
+        let cmd = self.command_buf.trim().to_ascii_lowercase();
+        self.command_mode = false;
+        self.command_buf.clear();
+        if cmd.is_empty() {
+            return;
+        }
+        if cmd == "q" || cmd == "quit" {
+            self.should_quit = true;
+            return;
+        }
+        if cmd == "r" || cmd == "rescan" {
+            self.maybe_scan(true);
+            return;
+        }
+        if let Some(rest) = cmd.strip_prefix("mode ") {
+            let mode = rest.trim();
+            let parsed = match mode {
+                "honest" => Some(CalibrationMode::Honest),
+                "anchor" => Some(CalibrationMode::Anchor),
+                _ => None,
+            };
+            match parsed {
+                Some(m) => match self.calibration.set_mode(m) {
+                    Ok(()) => self.status = format!("Calibration mode: {mode}"),
+                    Err(e) => self.status = format!("mode failed: {e}"),
+                },
+                None => self.status = format!("Unknown mode: {mode}"),
+            }
+            return;
+        }
+        self.status = format!("Unknown command: {cmd}");
     }
 
     /// Selected MAC as `&str`, if any.
@@ -333,5 +418,41 @@ mod tests {
         assert!(app.calibration.rssi_at_1m(&mac).is_some());
         app.clear_calibration_selected();
         assert!(app.calibration.manual_bearing(&mac).is_none());
+    }
+
+    #[test]
+    fn mode_command_sets_anchor() {
+        let mut app = App::new("wlan0".into(), true);
+        assert_eq!(app.mode_label(), "honest");
+        app.begin_command_mode();
+        for ch in "mode anchor".chars() {
+            app.command_push_char(ch);
+        }
+        app.execute_command();
+        assert!(!app.command_mode);
+        assert_eq!(app.mode_label(), "anchor");
+        assert_eq!(app.calibration.mode(), CalibrationMode::Anchor);
+        assert!(app.status.contains("anchor"));
+    }
+
+    #[test]
+    fn unknown_mode_leaves_store_unchanged() {
+        let mut app = App::new("wlan0".into(), true);
+        app.begin_command_mode();
+        for ch in "mode weird".chars() {
+            app.command_push_char(ch);
+        }
+        app.execute_command();
+        assert_eq!(app.calibration.mode(), CalibrationMode::Honest);
+        assert!(app.status.contains("Unknown mode"));
+    }
+
+    #[test]
+    fn command_backspace_exits_when_empty() {
+        let mut app = App::new("wlan0".into(), true);
+        app.begin_command_mode();
+        app.command_push_char('m');
+        app.command_backspace();
+        assert!(!app.command_mode);
     }
 }
