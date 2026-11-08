@@ -37,12 +37,12 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!(
-            "v{}  iface={}  backend={}  mode={}  hdg={:.0}°",
+            "v{}  iface={}  backend={}  hdg={:.0}°  {}",
             env!("CARGO_PKG_VERSION"),
             app.iface,
             app.backend_label(),
-            app.mode_label(),
-            app.heading_deg
+            app.heading_deg,
+            app.correction.short_label()
         )),
     ]);
     let block = Block::default()
