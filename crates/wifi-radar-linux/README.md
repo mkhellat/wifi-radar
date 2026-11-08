@@ -2,9 +2,9 @@
 
 Linux RF backends for wifi-radar.
 
-- **Target:** native nl80211 (and later spectral scan)
-- **Interim:** `IwCliBackend` (`iw dev … scan`) behind the core `ScanBackend` trait
-- **Stub:** `Nl80211Backend` (compile-time placeholder until netlink lands)
+- **Target:** native nl80211 (and later spectral scan) in `src/nl80211.rs`
+- **Interim:** `IwCliBackend` in `src/iw.rs` (`iw dev … scan`) behind `ScanBackend`
+- **Stub:** `Nl80211Backend` still returns an error until netlink scan lands
 
 ```bash
 cargo test -p wifi-radar-linux
