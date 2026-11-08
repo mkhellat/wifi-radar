@@ -50,13 +50,7 @@ On Debian/Ubuntu:
 Install wifi-radar
 ------------------
 
-**From PyPI** (once published):
-
-.. code-block:: bash
-
-   pip install wifi-radar
-
-**From source** (development):
+**Not on PyPI yet.** Install from source (development or local use):
 
 .. code-block:: bash
 
@@ -64,6 +58,8 @@ Install wifi-radar
    cd wifi-radar
    ./configure
    make
+
+Or editable pip from the clone: ``pip install -e ".[dev]"``.
 
 This follows the traditional GNU/FOSS workflow: ``./configure`` detects the
 platform and generates ``Makefile`` from the committed ``Makefile.in`` template.
