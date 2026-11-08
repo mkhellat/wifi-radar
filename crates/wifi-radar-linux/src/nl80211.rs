@@ -1,24 +1,29 @@
-//! Native nl80211 scan backend (stub until netlink scan lands).
+//! Native nl80211 scan backend.
 //!
-//! Kept in its own module so the interim [`crate::iw::IwCliBackend`] stays a
-//! pure CLI shim while this path grows netlink trigger/dump parsing.
+//! BSS attribute decoding lives in [`crate::bss`]. Live genetlink GET_SCAN
+//! lands in a follow-up PR; this backend still errors on [`ScanBackend::scan`]
+//! so callers keep using [`crate::IwCliBackend`] until then.
 
 use wifi_radar_core::{ScanBackend, ScanError, WifiDevice};
 
-/// Placeholder for the native nl80211 backend (tracked target).
+pub use crate::bss::{
+    device_from_bss_attrs, devices_from_nl80211_attrs, encode_nla, parse_nla_stream, RawAttr,
+};
+
+/// Native nl80211 backend (decode ready; socket dump not wired yet).
 pub struct Nl80211Backend {
     iface: String,
 }
 
 impl Nl80211Backend {
-    /// Create a stub nl80211 backend for `iface`.
+    /// Create an nl80211 backend for `iface`.
     pub fn new(iface: impl Into<String>) -> Self {
         Self {
             iface: iface.into(),
         }
     }
 
-    /// Interface name this backend will scan (once implemented).
+    /// Interface name this backend will scan.
     pub fn iface(&self) -> &str {
         &self.iface
     }
@@ -31,7 +36,7 @@ impl ScanBackend for Nl80211Backend {
 
     fn scan(&mut self) -> Result<Vec<WifiDevice>, ScanError> {
         Err(ScanError::Message(format!(
-            "nl80211 backend not implemented yet on {}; use IwCliBackend for now",
+            "nl80211 genetlink dump not wired yet on {}; BSS decode is ready in wifi_radar_linux::bss",
             self.iface
         )))
     }
@@ -42,13 +47,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stub_reports_name_and_iface() {
+    fn backend_reports_name_and_iface() {
         let mut b = Nl80211Backend::new("wlan0");
         assert_eq!(b.name(), "nl80211");
         assert_eq!(b.iface(), "wlan0");
-        let err = b.scan().expect_err("stub must not scan yet");
-        let msg = err.to_string();
-        assert!(msg.contains("nl80211"));
-        assert!(msg.contains("wlan0"));
+        let err = b.scan().expect_err("socket dump not wired");
+        assert!(err.to_string().contains("wlan0"));
     }
 }
