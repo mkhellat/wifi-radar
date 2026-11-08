@@ -143,7 +143,19 @@ make docs                 # build HTML docs in docs/_build/html/
 make format               # auto-format with ruff
 make clean                # remove venv and caches
 make distclean            # also remove generated Makefile
+
+# Rust workspace (hybrid migration)
+cargo test --workspace
+cargo run -p wifi-radar-tui -- --demo
+
+# Optional PyO3 façade (needs maturin in the venv)
+cd crates/wifi-radar-py && maturin develop --features extension-module
 ```
+
+Contributor guidance (scope, dual remotes, commit style) lives in
+[docs/dev/contributing.rst](docs/dev/contributing.rst). Architecture of
+the Python app and Cargo crates:
+[docs/dev/architecture.rst](docs/dev/architecture.rst).
 
 ## Mirrors
 
