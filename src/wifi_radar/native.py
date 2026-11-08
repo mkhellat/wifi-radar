@@ -7,12 +7,16 @@ Python modules.
 
 from __future__ import annotations
 
+from types import ModuleType
 from typing import Any
 
+native: ModuleType | None
 try:
-    import wifi_radar_native as native
+    import wifi_radar_native as _native
+
+    native = _native
 except ImportError:  # pragma: no cover - depends on maturin install
-    native = None  # type: ignore[assignment]
+    native = None
 
 __all__ = ["native", "available"]
 
@@ -26,7 +30,10 @@ def core_version() -> str | None:
     """Rust core version string, or ``None`` if the extension is missing."""
     if native is None:
         return None
-    return str(native.version())
+    version = getattr(native, "version", None)
+    if version is None:
+        return None
+    return str(version())
 
 
 def describe() -> dict[str, Any]:
