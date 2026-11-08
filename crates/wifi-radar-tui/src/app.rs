@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use wifi_radar_core::{DeviceStore, ScanBackend, ScanError, WifiDevice};
+use wifi_radar_core::{CalibrationStore, DeviceStore, ScanBackend, ScanError, WifiDevice};
 use wifi_radar_linux::{IwCliBackend, Nl80211Backend};
 
 use crate::polar::ScaleState;
@@ -33,6 +33,8 @@ pub struct App {
     pub heading_deg: f64,
     /// Auto-scale hysteresis for polar rings.
     pub scale: ScaleState,
+    /// Per-MAC pin / distance calibration (Python JSON-compatible).
+    pub calibration: CalibrationStore,
     pub should_quit: bool,
     last_scan: Instant,
     scan_interval: Duration,
@@ -63,6 +65,11 @@ impl App {
             last_backend: None,
             heading_deg: 0.0,
             scale: ScaleState::default(),
+            calibration: if demo {
+                CalibrationStore::memory()
+            } else {
+                CalibrationStore::new(CalibrationStore::default_path())
+            },
             should_quit: false,
             last_scan: Instant::now() - Duration::from_secs(60),
             scan_interval: Duration::from_secs(8),
@@ -140,10 +147,67 @@ impl App {
 
     fn refresh_snapshot(&mut self) {
         self.devices = self.store.snapshot();
+        self.calibration.apply_to_devices(&mut self.devices);
         if let Some(mac) = &self.selected_mac {
             if !self.devices.iter().any(|d| &d.mac == mac) {
                 self.selected_mac = None;
             }
+        }
+    }
+
+    /// Pin selected device at `heading + offset_deg` (world bearing).
+    pub fn pin_selected(&mut self, offset_deg: f64) {
+        let Some(mac) = self.selected_mac.clone() else {
+            self.status = "select a device before pinning (j/k)".into();
+            return;
+        };
+        let bearing = (self.heading_deg + offset_deg).rem_euclid(360.0);
+        match self.calibration.set_manual_bearing(&mac, bearing) {
+            Ok(()) => {
+                self.refresh_snapshot();
+                self.status = format!("Pinned {mac} at {bearing:.0}° (manual)");
+            }
+            Err(e) => self.status = format!("pin failed: {e}"),
+        }
+    }
+
+    /// Calibrate selected device distance reference at `distance_m`.
+    pub fn calibrate_distance_selected(&mut self, distance_m: f64) {
+        let Some(mac) = self.selected_mac.clone() else {
+            self.status = "select a device before distance calib (j/k)".into();
+            return;
+        };
+        let Some(dev) = self.devices.iter().find(|d| d.mac == mac) else {
+            self.status = "selected device missing from snapshot".into();
+            return;
+        };
+        let rssi = dev.rssi_dbm;
+        match self
+            .calibration
+            .set_distance_reference(&mac, rssi, distance_m)
+        {
+            Ok(ref_dbm) => {
+                self.refresh_snapshot();
+                self.status = format!(
+                    "Distance calib {mac} → {distance_m} m (rssi_at_1m={ref_dbm:.1})"
+                );
+            }
+            Err(e) => self.status = format!("distance calib failed: {e}"),
+        }
+    }
+
+    /// Clear saved calibration for the selected MAC.
+    pub fn clear_calibration_selected(&mut self) {
+        let Some(mac) = self.selected_mac.clone() else {
+            self.status = "select a device before clear (j/k)".into();
+            return;
+        };
+        match self.calibration.clear(&mac) {
+            Ok(()) => {
+                self.refresh_snapshot();
+                self.status = format!("Cleared calibration for {mac}");
+            }
+            Err(e) => self.status = format!("clear failed: {e}"),
         }
     }
 
@@ -254,5 +318,20 @@ mod tests {
         assert!((app.heading_deg - 350.0).abs() < 1e-9);
         app.rotate_heading(20.0);
         assert!((app.heading_deg - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pin_and_distance_on_selected_demo() {
+        let mut app = App::new("wlan0".into(), true);
+        app.maybe_scan(true);
+        app.select_first();
+        app.heading_deg = 10.0;
+        app.pin_selected(0.0);
+        let mac = app.selected_mac().unwrap().to_string();
+        assert!((app.calibration.manual_bearing(&mac).unwrap() - 10.0).abs() < 1e-9);
+        app.calibrate_distance_selected(1.0);
+        assert!(app.calibration.rssi_at_1m(&mac).is_some());
+        app.clear_calibration_selected();
+        assert!(app.calibration.manual_bearing(&mac).is_none());
     }
 }
