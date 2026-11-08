@@ -92,7 +92,8 @@ Optional Rust front-ends
 The shipping interactive app is still ``wifi-radar`` (Python curses).
 During the hybrid migration you can also try:
 
-**Ratatui list MVP** (no root needed in demo mode):
+**Ratatui list MVP** (no root needed in demo mode). Live mode prefers
+nl80211 GET_SCAN dump and falls back to ``iw`` if genetlink fails:
 
 .. code-block:: bash
 
