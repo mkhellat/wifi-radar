@@ -77,14 +77,45 @@ Scope rules
 - **Never commit** local agent notes: ``CHECKPOINT.md``, ``CLAUDE.md``,
   ``.cursor/``, ``plans/``.
 
-Mirrors
--------
+Mirrors and landing path
+------------------------
 
-The project is mirrored on two remotes:
+The project is mirrored on two remotes with **different landing rules**:
 
-- **GitHub** (origin): https://github.com/mkhellat/wifi-radar
-- **Codeberg**: https://codeberg.org/mkhellat/wifi-radar
+- **GitHub** (origin): https://github.com/mkhellat/wifi-radar —
+  reviewable work lands on ``main`` via **pull requests** (a coherent
+  collection of atomic commits). Do not push feature work straight to
+  ``origin/main``.
+- **Codeberg**: https://codeberg.org/mkhellat/wifi-radar —
+  keep **atomic one-SHA pushes** so the Codeberg activity log stays
+  step-by-step readable.
 
-After **each** atomic commit, push that single SHA to both remotes before the
-next commit (readable host activity logs). On networks that need it, prefix
-remote git/ssh with ``proxychains4 -q``.
+Typical flow:
+
+1. Branch from ``main`` (``topic/short-name``).
+2. One reviewable design step per commit (prefer 1–3 related files).
+3. After each commit, push that single SHA to the **same branch on
+   Codeberg** before starting the next commit.
+4. When the collection is ready, open a GitHub PR into ``main``.
+5. After the PR merges, sync ``codeberg/main`` (still one SHA at a time
+   when replaying several commits).
+
+On networks that need it, prefix remote git/ssh with ``proxychains4 -q``.
+
+Pull request body (GNU / Savannah style)
+----------------------------------------
+
+Write PR descriptions for human reviewers, in the spirit of GNU Savannah
+patch mail and ChangeLog notes — not a paste of commit subjects alone.
+
+Include:
+
+- **Purpose** — what problem this collection solves (one short paragraph).
+- **Motivation** — why the change is needed now / what was wrong before.
+- **Changes** — file-oriented notes (``* path:`` imperative summary),
+  grouped if the PR spans several commits.
+- **How to verify** — commands reviewers can run (``make check``,
+  ``cargo test --workspace``, ``sphinx-build -W``, demo TUI, etc.).
+
+Keep the PR scoped to one coherent theme (e.g. “nl80211 scan MVP”, not
+“nl80211 + polar TUI + multi-node”).
