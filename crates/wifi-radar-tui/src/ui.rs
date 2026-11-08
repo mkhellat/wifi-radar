@@ -121,7 +121,11 @@ fn draw_table(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let help = " h/l=hdg  j/k=select  g/G=first/last  Esc=deselect  r=rescan  q=quit ";
+    let help = if app.selected_mac().is_some() {
+        " 8/4/6/2=pin  D/d=dist  x=clear  h/l=hdg  j/k  Esc  r  q "
+    } else {
+        " h/l=hdg  j/k=select  g/G  Esc  r=rescan  q=quit  (select for pin/dist) "
+    };
     let text = Line::from(vec![
         Span::raw(app.status.clone()),
         Span::raw("  "),

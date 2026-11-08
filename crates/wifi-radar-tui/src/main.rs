@@ -94,6 +94,13 @@ fn event_loop(
                     KeyCode::Char('l') | KeyCode::Right => app.rotate_heading(5.0),
                     KeyCode::Char('H') => app.rotate_heading(-15.0),
                     KeyCode::Char('L') => app.rotate_heading(15.0),
+                    KeyCode::Char('8') => app.pin_selected(0.0),
+                    KeyCode::Char('6') => app.pin_selected(90.0),
+                    KeyCode::Char('2') => app.pin_selected(180.0),
+                    KeyCode::Char('4') => app.pin_selected(-90.0),
+                    KeyCode::Char('D') => app.calibrate_distance_selected(0.25),
+                    KeyCode::Char('d') => app.calibrate_distance_selected(1.0),
+                    KeyCode::Char('x') | KeyCode::Char('X') => app.clear_calibration_selected(),
                     _ => {}
                 }
             }
