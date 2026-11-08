@@ -120,7 +120,7 @@ interactive app until parity is reached.
 crates/
   wifi-radar-core/    Domain models, store, scan traits (Rust)
   wifi-radar-linux/   nl80211 target + interim iw shim (Rust)
-  wifi-radar-tui/     Ratatui primary UI binary (stub)
+  wifi-radar-tui/     Ratatui primary UI (`--demo` / `-i`, list MVP)
   wifi-radar-py/      PyO3 / Maturin façade (stub)
 
 src/wifi_radar/       Current Python app (curses TUI, iw/airodump/tshark)
