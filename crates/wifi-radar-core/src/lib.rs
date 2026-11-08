@@ -6,6 +6,7 @@
 
 pub mod models;
 pub mod scan;
+pub mod store;
 pub mod util;
 
 pub use models::{
@@ -13,6 +14,7 @@ pub use models::{
     RSSI_AT_1M_AP, RSSI_AT_1M_CLIENT,
 };
 pub use scan::{ScanBackend, ScanError};
+pub use store::{DeviceStore, DEFAULT_TTL_SEC, RSSI_EMA_ALPHA};
 pub use util::normalize_mac;
 
 /// Crate version string (mirrors workspace package version).
