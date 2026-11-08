@@ -7,6 +7,8 @@ System Requirements
 - **Operating system**: Linux (kernel with nl80211 / cfg80211)
 - **Python**: 3.11 or later
 - **Architecture**: Any (x86_64, aarch64, etc.)
+- **Optional (Rust MVP)**: ``rustc`` / ``cargo`` (MSRV 1.75+) for the
+  Ratatui binary; ``maturin`` for the ``wifi_radar_native`` extension
 
 System Tools
 ------------
@@ -83,3 +85,27 @@ For vendor name display, download the IEEE OUI database:
 
 This downloads ``oui.csv`` from IEEE and caches it at
 ``~/.cache/wifi_radar/oui.txt``. Run periodically to update.
+
+Optional Rust front-ends
+------------------------
+
+The shipping interactive app is still ``wifi-radar`` (Python curses).
+During the hybrid migration you can also try:
+
+**Ratatui list MVP** (no root needed in demo mode):
+
+.. code-block:: bash
+
+   cargo run -p wifi-radar-tui -- --demo
+   cargo run -p wifi-radar-tui -- -i wlan0
+
+**PyO3 scripting module** (from ``crates/wifi-radar-py``):
+
+.. code-block:: bash
+
+   pip install maturin
+   maturin develop --features extension-module
+   python -c "import wifi_radar_native as w; print(w.version())"
+
+See the crate READMEs under ``crates/wifi-radar-tui/`` and
+``crates/wifi-radar-py/`` for keys and API details.
