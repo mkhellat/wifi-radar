@@ -37,10 +37,11 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!(
-            "v{}  iface={}  backend={}  hdg={:.0}°",
+            "v{}  iface={}  backend={}  mode={}  hdg={:.0}°",
             env!("CARGO_PKG_VERSION"),
             app.iface,
             app.backend_label(),
+            app.mode_label(),
             app.heading_deg
         )),
     ]);
@@ -121,16 +122,32 @@ fn draw_table(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let help = if app.selected_mac().is_some() {
-        " 8/4/6/2=pin  D/d=dist  x=clear  h/l=hdg  j/k  Esc  r  q "
+    let text = if app.command_mode {
+        Line::from(vec![
+            Span::styled(
+                format!(":{}", app.command_buf),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("█", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                "  Enter=run  Esc=cancel  (:mode honest|anchor)",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
     } else {
-        " h/l=hdg  j/k=select  g/G  Esc  r=rescan  q=quit  (select for pin/dist) "
+        let help = if app.selected_mac().is_some() {
+            " :=cmd  8/4/6/2=pin  D/d=dist  x=clear  h/l  j/k  Esc  r  q "
+        } else {
+            " :=cmd  h/l=hdg  j/k=select  g/G  Esc  r=rescan  q  (select for pin/dist) "
+        };
+        Line::from(vec![
+            Span::raw(app.status.clone()),
+            Span::raw("  "),
+            Span::styled(help, Style::default().fg(Color::DarkGray)),
+        ])
     };
-    let text = Line::from(vec![
-        Span::raw(app.status.clone()),
-        Span::raw("  "),
-        Span::styled(help, Style::default().fg(Color::DarkGray)),
-    ]);
     frame.render_widget(
         Paragraph::new(text).block(Block::default().borders(Borders::ALL)),
         area,
