@@ -18,7 +18,7 @@ pub enum CalibrationMode {
     /// Only apply explicit per-MAC anchors; no scene propagation.
     #[default]
     Honest,
-    /// Heuristic distance/bearing propagation (engine lands later).
+    /// Heuristic distance/bearing propagation via scene correction.
     Anchor,
 }
 
@@ -189,6 +189,16 @@ impl CalibrationStore {
         self.manual_bearing.remove(&key);
         self.distance_anchor_m.remove(&key);
         self.save()
+    }
+
+    /// True if `mac` has a stored RSSI-at-1m / distance anchor.
+    pub fn has_distance_calibration(&self, mac: &str) -> bool {
+        self.rssi_at_1m.contains_key(&normalize_mac(mac))
+    }
+
+    /// True if `mac` has a stored manual bearing pin.
+    pub fn has_manual_bearing(&self, mac: &str) -> bool {
+        self.manual_bearing.contains_key(&normalize_mac(mac))
     }
 
     /// Apply stored overrides onto a device snapshot (mutates in place).
