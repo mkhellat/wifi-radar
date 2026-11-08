@@ -82,26 +82,39 @@ fn event_loop(
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Char('Q') => app.should_quit = true,
-                    KeyCode::Char('r') | KeyCode::Char('R') => app.maybe_scan(true),
-                    KeyCode::Char('j') | KeyCode::Down => app.select_next(),
-                    KeyCode::Char('k') | KeyCode::Up => app.select_prev(),
-                    KeyCode::Char('g') => app.select_first(),
-                    KeyCode::Char('G') => app.select_last(),
-                    KeyCode::Esc => app.clear_selection(),
-                    KeyCode::Char('h') | KeyCode::Left => app.rotate_heading(-5.0),
-                    KeyCode::Char('l') | KeyCode::Right => app.rotate_heading(5.0),
-                    KeyCode::Char('H') => app.rotate_heading(-15.0),
-                    KeyCode::Char('L') => app.rotate_heading(15.0),
-                    KeyCode::Char('8') => app.pin_selected(0.0),
-                    KeyCode::Char('6') => app.pin_selected(90.0),
-                    KeyCode::Char('2') => app.pin_selected(180.0),
-                    KeyCode::Char('4') => app.pin_selected(-90.0),
-                    KeyCode::Char('D') => app.calibrate_distance_selected(0.25),
-                    KeyCode::Char('d') => app.calibrate_distance_selected(1.0),
-                    KeyCode::Char('x') | KeyCode::Char('X') => app.clear_calibration_selected(),
-                    _ => {}
+                if app.command_mode {
+                    match key.code {
+                        KeyCode::Esc => app.cancel_command_mode(),
+                        KeyCode::Enter => app.execute_command(),
+                        KeyCode::Backspace => app.command_backspace(),
+                        KeyCode::Char(ch) => app.command_push_char(ch),
+                        _ => {}
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Char('Q') => app.should_quit = true,
+                        KeyCode::Char('r') | KeyCode::Char('R') => app.maybe_scan(true),
+                        KeyCode::Char('j') | KeyCode::Down => app.select_next(),
+                        KeyCode::Char('k') | KeyCode::Up => app.select_prev(),
+                        KeyCode::Char('g') => app.select_first(),
+                        KeyCode::Char('G') => app.select_last(),
+                        KeyCode::Esc => app.clear_selection(),
+                        KeyCode::Char('h') | KeyCode::Left => app.rotate_heading(-5.0),
+                        KeyCode::Char('l') | KeyCode::Right => app.rotate_heading(5.0),
+                        KeyCode::Char('H') => app.rotate_heading(-15.0),
+                        KeyCode::Char('L') => app.rotate_heading(15.0),
+                        KeyCode::Char('8') => app.pin_selected(0.0),
+                        KeyCode::Char('6') => app.pin_selected(90.0),
+                        KeyCode::Char('2') => app.pin_selected(180.0),
+                        KeyCode::Char('4') => app.pin_selected(-90.0),
+                        KeyCode::Char('D') => app.calibrate_distance_selected(0.25),
+                        KeyCode::Char('d') => app.calibrate_distance_selected(1.0),
+                        KeyCode::Char('x') | KeyCode::Char('X') => {
+                            app.clear_calibration_selected()
+                        }
+                        KeyCode::Char(':') => app.begin_command_mode(),
+                        _ => {}
+                    }
                 }
             }
         }
