@@ -5,12 +5,14 @@
 #![deny(missing_docs)]
 
 pub mod calibration;
+pub mod correction;
 pub mod models;
 pub mod scan;
 pub mod store;
 pub mod util;
 
 pub use calibration::{CalibrationMode, CalibrationStore};
+pub use correction::{apply_scene_corrections, AnchorDiagnostic, CorrectionSummary};
 pub use models::{
     now_unix, placeholder_bearing_for_mac, DeviceKind, WifiDevice, PATH_LOSS_EXPONENT_INDOOR,
     RSSI_AT_1M_AP, RSSI_AT_1M_CLIENT,
