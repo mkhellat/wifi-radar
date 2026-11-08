@@ -53,7 +53,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
 fn draw_polar(frame: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("Polar (heading keys / calibration: next PRs)");
+        .title("Polar  h/l=heading  j/k=select");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let selected = app.selected_mac().map(str::to_string);
@@ -79,8 +79,9 @@ fn draw_table(frame: &mut Frame, area: Rect, app: &App) {
     .style(Style::default().add_modifier(Modifier::BOLD))
     .bottom_margin(0);
 
+    let selected_idx = app.selected_index();
     let rows = app.devices.iter().enumerate().map(|(i, d)| {
-        let style = if i == app.selected {
+        let style = if Some(i) == selected_idx {
             Style::default()
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD)
@@ -120,7 +121,7 @@ fn draw_table(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let help = " j/k=select  r=rescan  q=quit ";
+    let help = " h/l=hdg  j/k=select  g/G=first/last  Esc=deselect  r=rescan  q=quit ";
     let text = Line::from(vec![
         Span::raw(app.status.clone()),
         Span::raw("  "),

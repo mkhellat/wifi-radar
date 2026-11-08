@@ -87,6 +87,13 @@ fn event_loop(
                     KeyCode::Char('r') | KeyCode::Char('R') => app.maybe_scan(true),
                     KeyCode::Char('j') | KeyCode::Down => app.select_next(),
                     KeyCode::Char('k') | KeyCode::Up => app.select_prev(),
+                    KeyCode::Char('g') => app.select_first(),
+                    KeyCode::Char('G') => app.select_last(),
+                    KeyCode::Esc => app.clear_selection(),
+                    KeyCode::Char('h') | KeyCode::Left => app.rotate_heading(-5.0),
+                    KeyCode::Char('l') | KeyCode::Right => app.rotate_heading(5.0),
+                    KeyCode::Char('H') => app.rotate_heading(-15.0),
+                    KeyCode::Char('L') => app.rotate_heading(15.0),
                     _ => {}
                 }
             }
