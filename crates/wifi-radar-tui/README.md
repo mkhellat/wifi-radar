@@ -13,10 +13,11 @@ cargo run -p wifi-radar-tui -- -i wlan0
 ```
 
 Keys: `h`/`l` heading (±5°), `H`/`L` fast (±15°), `j`/`k` select,
-`g`/`G` first/last, `Esc` deselect, `r` rescan, `q` quit, `:` command.
+`g`/`G` first/last, `Esc` deselect, `r` rescan, `q` quit, `?` help,
+`:` command.
 
-Commands: `:mode honest` / `:mode anchor` (persisted), `:r` rescan,
-`:q` quit.
+Commands: `:mode honest` / `:mode anchor` (persisted), `:clear` / `:x`,
+`:help` / `:h`, `:r` rescan, `:q` quit.
 
 With a device selected: `8`/`4`/`6`/`2` pin ahead/left/right/behind,
 `D`/`d` distance calib at 0.25 m / 1 m, `x` clear calibration
