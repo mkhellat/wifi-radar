@@ -3,7 +3,8 @@
 use std::time::{Duration, Instant};
 
 use wifi_radar_core::{
-    CalibrationMode, CalibrationStore, DeviceStore, ScanBackend, ScanError, WifiDevice,
+    apply_scene_corrections, CalibrationMode, CalibrationStore, CorrectionSummary, DeviceStore,
+    ScanBackend, ScanError, WifiDevice,
 };
 use wifi_radar_linux::{IwCliBackend, Nl80211Backend};
 
@@ -37,6 +38,8 @@ pub struct App {
     pub scale: ScaleState,
     /// Per-MAC pin / distance calibration (Python JSON-compatible).
     pub calibration: CalibrationStore,
+    /// Last scene-correction summary (updated on snapshot refresh).
+    pub correction: CorrectionSummary,
     /// Vi-style `:` command entry is active.
     pub command_mode: bool,
     /// Buffer contents after the leading `:`.
@@ -75,6 +78,13 @@ impl App {
                 CalibrationStore::memory()
             } else {
                 CalibrationStore::new(CalibrationStore::default_path())
+            },
+            correction: CorrectionSummary {
+                mode: CalibrationMode::Honest,
+                visible_anchors: 0,
+                active_anchors: 0,
+                distance_scale: 1.0,
+                bearing_offset_deg: 0.0,
             },
             command_mode: false,
             command_buf: String::new(),
@@ -151,7 +161,10 @@ impl App {
             };
             match parsed {
                 Some(m) => match self.calibration.set_mode(m) {
-                    Ok(()) => self.status = format!("Calibration mode: {mode}"),
+                    Ok(()) => {
+                        self.refresh_snapshot();
+                        self.status = format!("Calibration mode: {mode}");
+                    }
                     Err(e) => self.status = format!("mode failed: {e}"),
                 },
                 None => self.status = format!("Unknown mode: {mode}"),
@@ -233,6 +246,7 @@ impl App {
     fn refresh_snapshot(&mut self) {
         self.devices = self.store.snapshot();
         self.calibration.apply_to_devices(&mut self.devices);
+        self.correction = apply_scene_corrections(&mut self.devices, &self.calibration);
         if let Some(mac) = &self.selected_mac {
             if !self.devices.iter().any(|d| &d.mac == mac) {
                 self.selected_mac = None;
@@ -454,5 +468,46 @@ mod tests {
         app.command_push_char('m');
         app.command_backspace();
         assert!(!app.command_mode);
+    }
+
+    #[test]
+    fn refresh_applies_scene_distance_in_honest_mode() {
+        let mut app = App::new("wlan0".into(), true);
+        app.maybe_scan(true);
+        app.select_first();
+        let mac = app.selected_mac().unwrap().to_string();
+        app.calibrate_distance_selected(1.0);
+        assert!(app.calibration.has_distance_calibration(&mac));
+        assert!(app.correction.active_anchors >= 1);
+        let other = app
+            .devices
+            .iter()
+            .find(|d| d.mac != mac)
+            .expect("demo has multiple devices");
+        assert_eq!(other.correction_note, "scene distance");
+        assert!(other.distance_override_m.is_some());
+    }
+
+    #[test]
+    fn anchor_mode_propagates_bearing_override() {
+        let mut app = App::new("wlan0".into(), true);
+        app.maybe_scan(true);
+        app.select_first();
+        app.heading_deg = 0.0;
+        app.pin_selected(90.0);
+        app.begin_command_mode();
+        for ch in "mode anchor".chars() {
+            app.command_push_char(ch);
+        }
+        app.execute_command();
+        assert_eq!(app.calibration.mode(), CalibrationMode::Anchor);
+        let pin_mac = app.selected_mac().unwrap().to_string();
+        let other = app
+            .devices
+            .iter()
+            .find(|d| d.mac != pin_mac)
+            .expect("demo has multiple devices");
+        assert_eq!(other.correction_note, "scene anchor");
+        assert!(other.bearing_override_deg.is_some());
     }
 }
