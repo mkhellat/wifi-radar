@@ -118,6 +118,8 @@ fn event_loop(
                             app.clear_calibration_selected()
                         }
                         KeyCode::Char('?') => app.show_help(),
+                        KeyCode::Char('c') => app.toggle_bearing_calib(),
+                        KeyCode::Char('m') => app.toggle_monitor(),
                         KeyCode::Char(':') => app.begin_command_mode(),
                         _ => {}
                     }

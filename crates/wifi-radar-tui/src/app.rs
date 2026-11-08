@@ -3,8 +3,8 @@
 use std::time::{Duration, Instant};
 
 use wifi_radar_core::{
-    apply_scene_corrections, CalibrationMode, CalibrationStore, CorrectionSummary, DeviceStore,
-    ScanBackend, ScanError, WifiDevice,
+    apply_scene_corrections, BearingCalibrator, CalibrationMode, CalibrationStore,
+    CorrectionSummary, DeviceStore, ScanBackend, ScanError, WifiDevice,
 };
 use wifi_radar_linux::{IwCliBackend, Nl80211Backend};
 
@@ -46,6 +46,12 @@ pub struct App {
     pub command_buf: String,
     /// Full-screen help overlay is visible.
     pub help_overlay: bool,
+    /// Session rotation calibrator (`c` / `:calib`).
+    pub bearing_calibrator: BearingCalibrator,
+    /// Increments on each successful scan (gates calibrator samples).
+    pub scan_generation: u64,
+    /// Monitor capture toggle (stub — no airodump path in Ratatui yet).
+    pub mon_enabled: bool,
     pub should_quit: bool,
     last_scan: Instant,
     scan_interval: Duration,
@@ -91,10 +97,37 @@ impl App {
             command_mode: false,
             command_buf: String::new(),
             help_overlay: false,
+            bearing_calibrator: BearingCalibrator::new(),
+            scan_generation: 0,
+            mon_enabled: false,
             should_quit: false,
             last_scan: Instant::now() - Duration::from_secs(60),
             scan_interval: Duration::from_secs(8),
         }
+    }
+
+    /// Toggle session rotation calibration (Python `c` / `:calib`).
+    pub fn toggle_bearing_calib(&mut self) {
+        if self.bearing_calibrator.active() {
+            self.bearing_calibrator.stop();
+            let n = self
+                .bearing_calibrator
+                .apply(&mut self.store, &self.calibration);
+            self.refresh_snapshot();
+            self.status = format!("Calibration stopped ({n} bearing(s) applied)");
+        } else {
+            self.bearing_calibrator.start();
+            self.status = "CALIBRATING: rotate slowly, h/l to turn".into();
+        }
+    }
+
+    /// Toggle monitor-mode flag (status-only until airodump is wired).
+    pub fn toggle_monitor(&mut self) {
+        self.mon_enabled = !self.mon_enabled;
+        let state = if self.mon_enabled { "ON" } else { "OFF" };
+        self.status = format!(
+            "Monitor {state} (Ratatui: flag only — airodump/tshark not wired yet)"
+        );
     }
 
     /// Show the help overlay (dismiss with any key).
@@ -175,6 +208,14 @@ impl App {
             self.clear_calibration_selected();
             return;
         }
+        if cmd == "c" || cmd == "calib" || cmd == "calibrate" {
+            self.toggle_bearing_calib();
+            return;
+        }
+        if cmd == "m" || cmd == "monitor" {
+            self.toggle_monitor();
+            return;
+        }
         if let Some(rest) = cmd.strip_prefix("mode ") {
             let mode = rest.trim();
             let parsed = match mode {
@@ -237,28 +278,40 @@ impl App {
             Ok((batch, backend_name, note)) => {
                 let n = batch.len();
                 self.store.merge(batch);
+                self.scan_generation = self.scan_generation.saturating_add(1);
                 self.refresh_snapshot();
+                self.bearing_calibrator.feed(
+                    self.heading_deg,
+                    &self.devices,
+                    self.scan_generation,
+                );
                 if backend_name != "demo" {
                     self.last_backend = Some(backend_name);
                 }
-                self.status = if backend_name == "demo" {
-                    format!(
+                if self.bearing_calibrator.active() {
+                    self.status = format!(
+                        "CALIBRATING  gen={}  {} device(s)  (h/l turn, c stop)",
+                        self.scan_generation,
+                        self.devices.len()
+                    );
+                } else if backend_name == "demo" {
+                    self.status = format!(
                         "DEMO  {} device(s)  (j/k select, r rescan, q quit)",
                         self.devices.len()
-                    )
+                    );
                 } else if let Some(note) = note {
-                    format!(
+                    self.status = format!(
                         "{} via {backend_name} ({note})  last {n} BSS  store {}  (j/k r q)",
                         self.iface,
                         self.devices.len()
-                    )
+                    );
                 } else {
-                    format!(
+                    self.status = format!(
                         "{} via {backend_name}  last scan {n} BSS  store {}  (j/k r q)",
                         self.iface,
                         self.devices.len()
-                    )
-                };
+                    );
+                }
             }
             Err(e) => {
                 self.status = format!("scan error on {}: {e}", self.iface);
@@ -520,6 +573,29 @@ mod tests {
         }
         app.execute_command();
         assert!(app.calibration.manual_bearing(&mac).is_none());
+    }
+
+    #[test]
+    fn toggle_bearing_calib_starts_and_stops() {
+        let mut app = App::new("wlan0".into(), true);
+        assert!(!app.bearing_calibrator.active());
+        app.toggle_bearing_calib();
+        assert!(app.bearing_calibrator.active());
+        assert!(app.status.contains("CALIBRATING"));
+        app.toggle_bearing_calib();
+        assert!(!app.bearing_calibrator.active());
+        assert!(app.status.contains("stopped"));
+    }
+
+    #[test]
+    fn toggle_monitor_flips_flag() {
+        let mut app = App::new("wlan0".into(), true);
+        assert!(!app.mon_enabled);
+        app.toggle_monitor();
+        assert!(app.mon_enabled);
+        assert!(app.status.contains("Monitor ON"));
+        app.toggle_monitor();
+        assert!(!app.mon_enabled);
     }
 
     #[test]
