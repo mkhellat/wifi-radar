@@ -22,13 +22,14 @@ pub enum ScanSource {
 pub struct App {
     pub store: DeviceStore,
     pub devices: Vec<WifiDevice>,
-    pub selected: usize,
+    /// Selected device MAC (stable across RSSI re-sorts).
+    pub selected_mac: Option<String>,
     pub status: String,
     pub iface: String,
     pub source: ScanSource,
     /// Last successful live backend name (`nl80211` / `iw-cli`), if any.
     pub last_backend: Option<&'static str>,
-    /// Compass heading in degrees (rotation keys land in a follow-up PR).
+    /// Compass heading in degrees (h/l rotate).
     pub heading_deg: f64,
     /// Auto-scale hysteresis for polar rings.
     pub scale: ScaleState,
@@ -51,7 +52,7 @@ impl App {
         Self {
             store: DeviceStore::new(),
             devices: Vec::new(),
-            selected: 0,
+            selected_mac: None,
             status: if demo {
                 "DEMO mode — synthetic devices (no radio scan)".into()
             } else {
@@ -68,9 +69,20 @@ impl App {
         }
     }
 
-    /// MAC of the currently selected device, if any.
+    /// Selected MAC as `&str`, if any.
     pub fn selected_mac(&self) -> Option<&str> {
-        self.devices.get(self.selected).map(|d| d.mac.as_str())
+        self.selected_mac.as_deref()
+    }
+
+    /// Index of the selected device in the current snapshot, if present.
+    pub fn selected_index(&self) -> Option<usize> {
+        let mac = self.selected_mac.as_ref()?;
+        self.devices.iter().position(|d| &d.mac == mac)
+    }
+
+    /// Rotate heading by `delta_deg` (normalized to \[0, 360)).
+    pub fn rotate_heading(&mut self, delta_deg: f64) {
+        self.heading_deg = (self.heading_deg + delta_deg).rem_euclid(360.0);
     }
 
     /// Header label for the active / preferred backend.
@@ -128,27 +140,48 @@ impl App {
 
     fn refresh_snapshot(&mut self) {
         self.devices = self.store.snapshot();
-        if self.devices.is_empty() {
-            self.selected = 0;
-        } else if self.selected >= self.devices.len() {
-            self.selected = self.devices.len() - 1;
+        if let Some(mac) = &self.selected_mac {
+            if !self.devices.iter().any(|d| &d.mac == mac) {
+                self.selected_mac = None;
+            }
         }
     }
 
     pub fn select_next(&mut self) {
-        if !self.devices.is_empty() {
-            self.selected = (self.selected + 1) % self.devices.len();
+        if self.devices.is_empty() {
+            self.selected_mac = None;
+            return;
         }
+        let next = match self.selected_index() {
+            None => 0,
+            Some(i) => (i + 1) % self.devices.len(),
+        };
+        self.selected_mac = Some(self.devices[next].mac.clone());
     }
 
     pub fn select_prev(&mut self) {
-        if !self.devices.is_empty() {
-            self.selected = if self.selected == 0 {
-                self.devices.len() - 1
-            } else {
-                self.selected - 1
-            };
+        if self.devices.is_empty() {
+            self.selected_mac = None;
+            return;
         }
+        let prev = match self.selected_index() {
+            None => self.devices.len() - 1,
+            Some(0) => self.devices.len() - 1,
+            Some(i) => i - 1,
+        };
+        self.selected_mac = Some(self.devices[prev].mac.clone());
+    }
+
+    pub fn select_first(&mut self) {
+        self.selected_mac = self.devices.first().map(|d| d.mac.clone());
+    }
+
+    pub fn select_last(&mut self) {
+        self.selected_mac = self.devices.last().map(|d| d.mac.clone());
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selected_mac = None;
     }
 }
 
@@ -200,5 +233,26 @@ mod tests {
         let app = App::new("wlan0".into(), false);
         assert_eq!(app.backend_label(), "nl80211");
         assert!(matches!(app.source, ScanSource::Live { .. }));
+    }
+
+    #[test]
+    fn selection_tracks_mac_across_resort() {
+        let mut app = App::new("wlan0".into(), true);
+        app.maybe_scan(true);
+        app.select_next(); // strongest first after snapshot; pick first
+        let mac = app.selected_mac().unwrap().to_string();
+        // Simulate resort by reversing devices while keeping selection MAC.
+        app.devices.reverse();
+        assert_eq!(app.selected_mac(), Some(mac.as_str()));
+        assert!(app.selected_index().is_some());
+    }
+
+    #[test]
+    fn rotate_heading_wraps() {
+        let mut app = App::new("wlan0".into(), true);
+        app.rotate_heading(-10.0);
+        assert!((app.heading_deg - 350.0).abs() < 1e-9);
+        app.rotate_heading(20.0);
+        assert!((app.heading_deg - 10.0).abs() < 1e-9);
     }
 }
