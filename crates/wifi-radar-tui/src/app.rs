@@ -2,13 +2,16 @@
 
 use std::time::{Duration, Instant};
 
-use wifi_radar_core::{DeviceStore, ScanBackend, WifiDevice};
-use wifi_radar_linux::IwCliBackend;
+use wifi_radar_core::{DeviceStore, ScanBackend, ScanError, WifiDevice};
+use wifi_radar_linux::{IwCliBackend, Nl80211Backend};
 
 /// How the TUI obtains scan samples.
 pub enum ScanSource {
-    /// Run `iw` on a real interface.
-    Iw(IwCliBackend),
+    /// Prefer genetlink GET_SCAN; fall back to `iw` on error.
+    Live {
+        nl: Nl80211Backend,
+        iw: IwCliBackend,
+    },
     /// Synthetic devices (no root / no radio needed).
     Demo,
 }
@@ -21,6 +24,8 @@ pub struct App {
     pub status: String,
     pub iface: String,
     pub source: ScanSource,
+    /// Last successful live backend name (`nl80211` / `iw-cli`), if any.
+    pub last_backend: Option<&'static str>,
     pub should_quit: bool,
     last_scan: Instant,
     scan_interval: Duration,
@@ -32,22 +37,34 @@ impl App {
         let source = if demo {
             ScanSource::Demo
         } else {
-            ScanSource::Iw(IwCliBackend::new(iface.clone()))
+            ScanSource::Live {
+                nl: Nl80211Backend::new(iface.clone()),
+                iw: IwCliBackend::new(iface.clone()),
+            }
         };
         Self {
             store: DeviceStore::new(),
             devices: Vec::new(),
             selected: 0,
             status: if demo {
-                "DEMO mode — synthetic devices (no iw scan)".into()
+                "DEMO mode — synthetic devices (no radio scan)".into()
             } else {
-                format!("Scanning {iface} via iw-cli …")
+                format!("Scanning {iface} via nl80211 (iw-cli fallback) …")
             },
             iface,
             source,
+            last_backend: None,
             should_quit: false,
             last_scan: Instant::now() - Duration::from_secs(60),
             scan_interval: Duration::from_secs(8),
+        }
+    }
+
+    /// Header label for the active / preferred backend.
+    pub fn backend_label(&self) -> &'static str {
+        match &self.source {
+            ScanSource::Demo => "demo",
+            ScanSource::Live { .. } => self.last_backend.unwrap_or("nl80211"),
         }
     }
 
@@ -58,23 +75,28 @@ impl App {
         }
         self.last_scan = Instant::now();
 
-        // Finish the source borrow before refreshing the snapshot.
         let outcome = match &mut self.source {
-            ScanSource::Demo => Ok((demo_devices(), "demo")),
-            ScanSource::Iw(backend) => {
-                let name = backend.name();
-                backend.scan().map(|batch| (batch, name))
-            }
+            ScanSource::Demo => Ok((demo_devices(), "demo", None)),
+            ScanSource::Live { nl, iw } => scan_live(nl, iw),
         };
 
         match outcome {
-            Ok((batch, backend_name)) => {
+            Ok((batch, backend_name, note)) => {
                 let n = batch.len();
                 self.store.merge(batch);
                 self.refresh_snapshot();
+                if backend_name != "demo" {
+                    self.last_backend = Some(backend_name);
+                }
                 self.status = if backend_name == "demo" {
                     format!(
                         "DEMO  {} device(s)  (j/k select, r rescan, q quit)",
+                        self.devices.len()
+                    )
+                } else if let Some(note) = note {
+                    format!(
+                        "{} via {backend_name} ({note})  last {n} BSS  store {}  (j/k r q)",
+                        self.iface,
                         self.devices.len()
                     )
                 } else {
@@ -117,6 +139,22 @@ impl App {
     }
 }
 
+/// Try nl80211 first; on error fall back to iw-cli for this pass.
+fn scan_live(
+    nl: &mut Nl80211Backend,
+    iw: &mut IwCliBackend,
+) -> Result<(Vec<WifiDevice>, &'static str, Option<&'static str>), ScanError> {
+    match nl.scan() {
+        Ok(batch) => Ok((batch, nl.name(), None)),
+        Err(nl_err) => match iw.scan() {
+            Ok(batch) => Ok((batch, iw.name(), Some("fell back from nl80211"))),
+            Err(iw_err) => Err(ScanError::Message(format!(
+                "nl80211: {nl_err}; iw-cli: {iw_err}"
+            ))),
+        },
+    }
+}
+
 fn demo_devices() -> Vec<WifiDevice> {
     let mut a = WifiDevice::hotspot("aa:aa:aa:00:00:01", -42.0);
     a.ssid = "Demo-AP-Near".into();
@@ -131,4 +169,23 @@ fn demo_devices() -> Vec<WifiDevice> {
     c.channel = 11;
     c.freq_mhz = 2462;
     vec![a, b, c]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn demo_source_label() {
+        let app = App::new("wlan0".into(), true);
+        assert_eq!(app.backend_label(), "demo");
+        assert!(matches!(app.source, ScanSource::Demo));
+    }
+
+    #[test]
+    fn live_defaults_to_nl80211_label() {
+        let app = App::new("wlan0".into(), false);
+        assert_eq!(app.backend_label(), "nl80211");
+        assert!(matches!(app.source, ScanSource::Live { .. }));
+    }
 }
