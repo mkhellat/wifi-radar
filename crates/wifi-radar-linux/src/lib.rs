@@ -6,8 +6,10 @@
 #![deny(missing_docs)]
 
 pub mod iw;
+pub mod nl80211;
 
-pub use iw::{IwCliBackend, Nl80211Backend};
+pub use iw::IwCliBackend;
+pub use nl80211::Nl80211Backend;
 
 use wifi_radar_core::VERSION as CORE_VERSION;
 

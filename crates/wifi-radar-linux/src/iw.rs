@@ -196,32 +196,6 @@ fn parse_bss_line(line: &str) -> Option<String> {
     }
 }
 
-/// Placeholder for the native nl80211 backend (tracked target).
-pub struct Nl80211Backend {
-    _iface: String,
-}
-
-impl Nl80211Backend {
-    /// Create a stub nl80211 backend for `iface`.
-    pub fn new(iface: impl Into<String>) -> Self {
-        Self {
-            _iface: iface.into(),
-        }
-    }
-}
-
-impl ScanBackend for Nl80211Backend {
-    fn name(&self) -> &'static str {
-        "nl80211"
-    }
-
-    fn scan(&mut self) -> Result<Vec<WifiDevice>, ScanError> {
-        Err(ScanError::Message(
-            "nl80211 backend not implemented yet; use IwCliBackend for now".into(),
-        ))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,12 +225,5 @@ BSS 11:22:33:44:55:66(on wlan0)
         assert_eq!(devices[1].mac, "11:22:33:44:55:66");
         assert_eq!(devices[1].channel, 36);
         assert_eq!(devices[1].freq_mhz, 5180);
-    }
-
-    #[test]
-    fn nl80211_stub_reports_name() {
-        let mut b = Nl80211Backend::new("wlan0");
-        assert_eq!(b.name(), "nl80211");
-        assert!(b.scan().is_err());
     }
 }
