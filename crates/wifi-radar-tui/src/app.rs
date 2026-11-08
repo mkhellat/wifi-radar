@@ -44,6 +44,8 @@ pub struct App {
     pub command_mode: bool,
     /// Buffer contents after the leading `:`.
     pub command_buf: String,
+    /// Full-screen help overlay is visible.
+    pub help_overlay: bool,
     pub should_quit: bool,
     last_scan: Instant,
     scan_interval: Duration,
@@ -88,10 +90,23 @@ impl App {
             },
             command_mode: false,
             command_buf: String::new(),
+            help_overlay: false,
             should_quit: false,
             last_scan: Instant::now() - Duration::from_secs(60),
             scan_interval: Duration::from_secs(8),
         }
+    }
+
+    /// Show the help overlay (dismiss with any key).
+    pub fn show_help(&mut self) {
+        self.help_overlay = true;
+        self.command_mode = false;
+        self.command_buf.clear();
+    }
+
+    /// Dismiss the help overlay.
+    pub fn dismiss_help(&mut self) {
+        self.help_overlay = false;
     }
 
     /// Active calibration mode label (`honest` / `anchor`).
@@ -150,6 +165,14 @@ impl App {
         }
         if cmd == "r" || cmd == "rescan" {
             self.maybe_scan(true);
+            return;
+        }
+        if cmd == "h" || cmd == "help" {
+            self.show_help();
+            return;
+        }
+        if cmd == "x" || cmd == "clear" {
+            self.clear_calibration_selected();
             return;
         }
         if let Some(rest) = cmd.strip_prefix("mode ") {
@@ -468,6 +491,35 @@ mod tests {
         app.command_push_char('m');
         app.command_backspace();
         assert!(!app.command_mode);
+    }
+
+    #[test]
+    fn help_command_shows_overlay() {
+        let mut app = App::new("wlan0".into(), true);
+        app.begin_command_mode();
+        for ch in "help".chars() {
+            app.command_push_char(ch);
+        }
+        app.execute_command();
+        assert!(app.help_overlay);
+        app.dismiss_help();
+        assert!(!app.help_overlay);
+    }
+
+    #[test]
+    fn clear_command_clears_selected_calib() {
+        let mut app = App::new("wlan0".into(), true);
+        app.maybe_scan(true);
+        app.select_first();
+        app.pin_selected(0.0);
+        let mac = app.selected_mac().unwrap().to_string();
+        assert!(app.calibration.has_manual_bearing(&mac));
+        app.begin_command_mode();
+        for ch in "clear".chars() {
+            app.command_push_char(ch);
+        }
+        app.execute_command();
+        assert!(app.calibration.manual_bearing(&mac).is_none());
     }
 
     #[test]
