@@ -1,6 +1,7 @@
 //! Ratatui primary UI for wifi-radar (MVP list view).
 
 mod app;
+mod help;
 mod polar;
 mod ui;
 
@@ -82,6 +83,10 @@ fn event_loop(
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
+                if app.help_overlay {
+                    app.dismiss_help();
+                    continue;
+                }
                 if app.command_mode {
                     match key.code {
                         KeyCode::Esc => app.cancel_command_mode(),
@@ -112,6 +117,7 @@ fn event_loop(
                         KeyCode::Char('x') | KeyCode::Char('X') => {
                             app.clear_calibration_selected()
                         }
+                        KeyCode::Char('?') => app.show_help(),
                         KeyCode::Char(':') => app.begin_command_mode(),
                         _ => {}
                     }

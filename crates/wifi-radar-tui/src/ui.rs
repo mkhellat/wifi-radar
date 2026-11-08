@@ -7,10 +7,15 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::help;
 use crate::polar;
 
 /// Draw header, polar canvas, device table, and status/footer.
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    if app.help_overlay {
+        draw_help(frame, app);
+        return;
+    }
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -26,6 +31,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_polar(frame, chunks[1], app);
     draw_table(frame, chunks[2], app);
     draw_footer(frame, chunks[3], app);
+}
+
+fn draw_help(frame: &mut Frame, app: &App) {
+    let lines = help::help_lines(app.selected_mac().is_some(), app.calibration.mode());
+    let text: Vec<Line> = lines.into_iter().map(Line::from).collect();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Help — any key to return");
+    frame.render_widget(
+        Paragraph::new(text)
+            .block(block)
+            .style(Style::default().fg(Color::White)),
+        frame.area(),
+    );
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
@@ -132,15 +151,15 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             ),
             Span::styled("█", Style::default().fg(Color::Yellow)),
             Span::styled(
-                "  Enter=run  Esc=cancel  (:mode honest|anchor)",
+                "  Enter=run  Esc=cancel  (:mode :clear :help)",
                 Style::default().fg(Color::DarkGray),
             ),
         ])
     } else {
         let help = if app.selected_mac().is_some() {
-            " :=cmd  8/4/6/2=pin  D/d=dist  x=clear  h/l  j/k  Esc  r  q "
+            " ?=help  :=cmd  8/4/6/2=pin  D/d=dist  x=clear  h/l  j/k  Esc  r  q "
         } else {
-            " :=cmd  h/l=hdg  j/k=select  g/G  Esc  r=rescan  q  (select for pin/dist) "
+            " ?=help  :=cmd  h/l=hdg  j/k=select  g/G  Esc  r=rescan  q "
         };
         Line::from(vec![
             Span::raw(app.status.clone()),
