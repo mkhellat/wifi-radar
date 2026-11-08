@@ -14,3 +14,5 @@ path = "src/main.rs"
 [dependencies]
 wifi-radar-core = { workspace = true }
 wifi-radar-linux = { workspace = true }
+crossterm = "0.28"
+ratatui = "0.29"
