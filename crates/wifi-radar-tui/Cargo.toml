@@ -1,0 +1,16 @@
+[package]
+name = "wifi-radar-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Ratatui primary UI for wifi-radar"
+readme = "README.md"
+
+[[bin]]
+name = "wifi-radar-tui"
+path = "src/main.rs"
+
+[dependencies]
+wifi-radar-core = { workspace = true }
+wifi-radar-linux = { workspace = true }

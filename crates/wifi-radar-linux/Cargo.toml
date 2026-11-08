@@ -1,0 +1,11 @@
+[package]
+name = "wifi-radar-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Linux RF backends for wifi-radar (nl80211 target; iw CLI shim)"
+readme = "README.md"
+
+[dependencies]
+wifi-radar-core = { workspace = true }

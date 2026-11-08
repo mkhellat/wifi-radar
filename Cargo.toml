@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wifi-radar-core",
+    "crates/wifi-radar-linux",
+    "crates/wifi-radar-tui",
+    "crates/wifi-radar-py",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/mkhellat/wifi-radar"
+rust-version = "1.75"
+
+[workspace.dependencies]
+wifi-radar-core = { path = "crates/wifi-radar-core" }
+wifi-radar-linux = { path = "crates/wifi-radar-linux" }

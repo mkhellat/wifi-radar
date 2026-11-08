@@ -20,3 +20,7 @@ Makefile
 CLAUDE.md
 CHECKPOINT.md
 .cursor/
+
+# Rust
+/target/
+**/target/

@@ -1,0 +1,15 @@
+[package]
+name = "wifi-radar-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "PyO3 bindings for wifi-radar (Maturin / PyPI façade)"
+readme = "README.md"
+
+[lib]
+name = "wifi_radar_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wifi-radar-core = { workspace = true }
