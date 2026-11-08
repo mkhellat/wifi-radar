@@ -112,23 +112,25 @@ switch to pin, distance-calibration, and clear-calibration actions.
 
 ## Architecture
 
+Hybrid migration is underway: a **Rust Cargo workspace** owns the long-term
+domain core and Ratatui UI; the current Python package remains the shipping
+interactive app until parity is reached.
+
 ```
-src/wifi_radar/
-  cli.py          CLI entry point
-  models.py       WifiDevice, DeviceKind
-  merge.py        DeviceStore (EMA RSSI, TTL expiry)
-  correction.py   Scene-wide correction engine
-  worker.py       Background scan thread
-  iface.py        Interface discovery, MonitorSession
-  oui.py          OUI vendor lookup/fetch
-  util.py         MAC normalization
-  scan/
-    iw.py         Parse `iw dev <iface> scan`
-    airodump.py   Parse airodump-ng CSV
-    tshark.py     Parse tshark probe fields
-  ui/
-    radar.py      Polar drawing (curses)
-    app.py        Main loop, keys, calibration
+crates/
+  wifi-radar-core/    Domain models, store, scan traits (Rust)
+  wifi-radar-linux/   nl80211 target + interim iw shim (Rust)
+  wifi-radar-tui/     Ratatui primary UI binary (stub)
+  wifi-radar-py/      PyO3 / Maturin façade (stub)
+
+src/wifi_radar/       Current Python app (curses TUI, iw/airodump/tshark)
+  cli.py              CLI entry point
+  models.py           WifiDevice, DeviceKind
+  merge.py            DeviceStore (EMA RSSI, TTL expiry)
+  correction.py       Scene-wide correction engine
+  worker.py           Background scan thread
+  scan/               iw / airodump / tshark parsers
+  ui/                 curses radar + app loop
 ```
 
 ## Development
