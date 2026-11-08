@@ -11,7 +11,7 @@ pip install maturin
 maturin develop --features extension-module
 ```
 
-## API (MVP)
+## API
 
 ```python
 import wifi_radar_native as wrn
@@ -20,9 +20,17 @@ assert wrn.version() == wrn.__version__
 
 store = wrn.DeviceStore()
 store.merge_hotspot("aa:bb:cc:dd:ee:01", -42.0, ssid="Demo", channel=6)
-for row in store.snapshot():
-    print(row["mac"], row["rssi_dbm"], row["distance_m"], row["bearing_deg"])
+cal = wrn.CalibrationStore.memory()
+cal.set_distance_reference("aa:bb:cc:dd:ee:01", -42.0, 1.0)
+cal.set_mode("honest")
+rows, summary = store.snapshot_calibrated(cal)
+print(summary["short_label"])
+for row in rows:
+    print(row["mac"], row["distance_m"], row.get("correction_note"))
 ```
+
+`CalibrationStore()` loads `~/.cache/wifi_radar/calibration.json` (same file as
+the TUI / Python curses app). Use `.memory()` for tests.
 
 Passive observation helpers only — no injection, deauth, or association.
 The full interactive app remains the Python curses `wifi-radar` script and the
