@@ -11,7 +11,7 @@ pub mod nl80211;
 
 pub use bss::{device_from_bss_attrs, devices_from_nl80211_attrs, RawAttr};
 pub use iw::IwCliBackend;
-pub use nl80211::Nl80211Backend;
+pub use nl80211::{trigger_scan, Nl80211Backend, DEFAULT_TRIGGER_WAIT};
 
 use wifi_radar_core::VERSION as CORE_VERSION;
 

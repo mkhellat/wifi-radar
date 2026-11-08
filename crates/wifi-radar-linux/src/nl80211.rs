@@ -1,11 +1,13 @@
-//! Native nl80211 scan backend (genetlink GET_SCAN dump).
+//! Native nl80211 scan backend (genetlink TRIGGER_SCAN + GET_SCAN dump).
 //!
-//! Passive dump of the kernel scan cache — no injection. Triggering a fresh
-//! scan (`TRIGGER_SCAN`) is left for a later PR; until then this matches the
-//! `iw scan dump` fallback path.
+//! Passive observation only — no injection / deauth. `TRIGGER_SCAN` requests a
+//! fresh kernel scan; on failure (permissions, busy iface) the backend still
+//! falls back to dumping the existing scan cache.
 
 use std::fs;
 use std::iter::once;
+use std::thread;
+use std::time::Duration;
 
 use neli::attr::Attribute;
 use neli::consts::nl::NlmF;
@@ -23,7 +25,10 @@ use crate::bss::{device_from_bss_attrs, parse_nla_stream};
 
 pub use crate::bss::{devices_from_nl80211_attrs, encode_nla, RawAttr};
 
-/// Minimal nl80211 attribute types needed for GET_SCAN dump.
+/// Default wait after a successful `TRIGGER_SCAN` before dumping results.
+pub const DEFAULT_TRIGGER_WAIT: Duration = Duration::from_millis(2500);
+
+/// Minimal nl80211 attribute types needed for TRIGGER_SCAN / GET_SCAN.
 #[neli_enum(serialized_type = "u16")]
 pub enum Nl80211Attr {
     /// Placeholder.
@@ -36,9 +41,13 @@ pub enum Nl80211Attr {
 
 impl neli::consts::genl::NlAttrType for Nl80211Attr {}
 
-/// Native nl80211 backend using genetlink GET_SCAN dump.
+/// Native nl80211 backend using genetlink TRIGGER_SCAN + GET_SCAN dump.
 pub struct Nl80211Backend {
     iface: String,
+    /// Sleep after a successful trigger before dumping the cache.
+    trigger_wait: Duration,
+    /// Last scan used a successful trigger (vs dump-only fallback).
+    last_triggered: bool,
 }
 
 impl Nl80211Backend {
@@ -46,12 +55,24 @@ impl Nl80211Backend {
     pub fn new(iface: impl Into<String>) -> Self {
         Self {
             iface: iface.into(),
+            trigger_wait: DEFAULT_TRIGGER_WAIT,
+            last_triggered: false,
         }
     }
 
     /// Interface name this backend scans.
     pub fn iface(&self) -> &str {
         &self.iface
+    }
+
+    /// Whether the most recent [`ScanBackend::scan`] issued a successful trigger.
+    pub fn last_triggered(&self) -> bool {
+        self.last_triggered
+    }
+
+    /// Override the post-trigger wait (tests / tuning).
+    pub fn set_trigger_wait(&mut self, wait: Duration) {
+        self.trigger_wait = wait;
     }
 }
 
@@ -61,8 +82,71 @@ impl ScanBackend for Nl80211Backend {
     }
 
     fn scan(&mut self) -> Result<Vec<WifiDevice>, ScanError> {
+        self.last_triggered = false;
+        match trigger_scan(&self.iface) {
+            Ok(()) => {
+                self.last_triggered = true;
+                thread::sleep(self.trigger_wait);
+            }
+            Err(_) => {
+                // Cache dump still useful without CAP_NET_ADMIN / when busy.
+            }
+        }
         dump_scan(&self.iface)
     }
+}
+
+/// Request a fresh scan on `iface` via nl80211 `TRIGGER_SCAN` (ifindex only).
+pub fn trigger_scan(iface: &str) -> Result<(), ScanError> {
+    let ifindex = read_ifindex(iface)?;
+    let (sock, _) = NlRouter::connect(NlFamily::Generic, Some(0), Groups::empty())
+        .map_err(|e| ScanError::Message(format!("nl80211 socket: {e}")))?;
+    let family_id = sock
+        .resolve_genl_family("nl80211")
+        .map_err(|e| ScanError::Message(format!("resolve nl80211 family: {e}")))?;
+
+    let attrs = once(
+        NlattrBuilder::default()
+            .nla_type(
+                AttrTypeBuilder::default()
+                    .nla_type(Nl80211Attr::Ifindex)
+                    .build()
+                    .map_err(|e| ScanError::Message(format!("attr type: {e}")))?,
+            )
+            .nla_payload(ifindex)
+            .build()
+            .map_err(|e| ScanError::Message(format!("attr payload: {e}")))?,
+    )
+    .collect::<GenlBuffer<_, _>>();
+
+    let recv = sock
+        .send::<_, _, u16, Genlmsghdr<Nl80211Command, Nl80211Attr>>(
+            family_id,
+            NlmF::ACK,
+            NlPayload::Payload(
+                GenlmsghdrBuilder::<Nl80211Command, Nl80211Attr, NoUserHeader>::default()
+                    .cmd(Nl80211Command::TriggerScan)
+                    .version(1)
+                    .attrs(attrs)
+                    .build()
+                    .map_err(|e| ScanError::Message(format!("genl header: {e}")))?,
+            ),
+        )
+        .map_err(|e| ScanError::Message(format!("TRIGGER_SCAN send: {e}")))?;
+
+    for msg in recv {
+        let msg = msg.map_err(|e| ScanError::Message(format!("TRIGGER_SCAN recv: {e}")))?;
+        match msg.nl_payload() {
+            NlPayload::Err(e) => {
+                return Err(ScanError::Message(format!("TRIGGER_SCAN nl err: {e}")));
+            }
+            NlPayload::Ack(_)
+            | NlPayload::Empty
+            | NlPayload::Payload(_)
+            | NlPayload::DumpExtAck(_) => {}
+        }
+    }
+    Ok(())
 }
 
 /// Dump cached scan results for `iface` via nl80211 GET_SCAN.
@@ -150,6 +234,7 @@ mod tests {
         let b = Nl80211Backend::new("wlan0");
         assert_eq!(b.name(), "nl80211");
         assert_eq!(b.iface(), "wlan0");
+        assert!(!b.last_triggered());
     }
 
     #[test]
@@ -163,6 +248,28 @@ mod tests {
     fn dump_scan_missing_iface_errors() {
         let err = dump_scan("wifi-radar-no-such-iface")
             .expect_err("missing iface must not succeed");
+        assert!(
+            err.to_string().contains("ifindex"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn trigger_scan_missing_iface_errors() {
+        let err = trigger_scan("wifi-radar-no-such-iface")
+            .expect_err("missing iface must not succeed");
+        assert!(
+            err.to_string().contains("ifindex"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn scan_falls_back_when_trigger_impossible() {
+        let mut b = Nl80211Backend::new("wifi-radar-no-such-iface");
+        b.set_trigger_wait(Duration::from_millis(0));
+        let err = b.scan().expect_err("missing iface must fail dump");
+        assert!(!b.last_triggered());
         assert!(
             err.to_string().contains("ifindex"),
             "unexpected error: {err}"
