@@ -159,8 +159,11 @@ the Python app and Cargo crates:
 
 ## Mirrors
 
-- GitHub: https://github.com/mkhellat/wifi-radar
-- Codeberg: https://codeberg.org/mkhellat/wifi-radar
+- GitHub: https://github.com/mkhellat/wifi-radar — feature work via **pull requests**
+- Codeberg: https://codeberg.org/mkhellat/wifi-radar — **atomic** per-commit pushes for a readable activity log
+
+See [docs/dev/contributing.rst](docs/dev/contributing.rst) for the dual-remote
+landing path and GNU/Savannah-style PR bodies.
 
 ## Legal & ethics
 
