@@ -1,4 +1,4 @@
-//! Ratatui drawing for the MVP list view.
+//! Ratatui drawing: polar canvas + device list + status.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -7,22 +7,25 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::polar;
 
-/// Draw header, device table, and status/footer.
-pub fn draw(frame: &mut Frame, app: &App) {
+/// Draw header, polar canvas, device table, and status/footer.
+pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
+            Constraint::Percentage(55),
             Constraint::Min(5),
             Constraint::Length(3),
         ])
         .split(area);
 
     draw_header(frame, chunks[0], app);
-    draw_table(frame, chunks[1], app);
-    draw_footer(frame, chunks[2], app);
+    draw_polar(frame, chunks[1], app);
+    draw_table(frame, chunks[2], app);
+    draw_footer(frame, chunks[3], app);
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
@@ -34,16 +37,34 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!(
-            "v{}  iface={}  backend={}",
+            "v{}  iface={}  backend={}  hdg={:.0}°",
             env!("CARGO_PKG_VERSION"),
             app.iface,
-            app.backend_label()
+            app.backend_label(),
+            app.heading_deg
         )),
     ]);
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Passive observation only — no injection / deauth");
     frame.render_widget(Paragraph::new(title).block(block), area);
+}
+
+fn draw_polar(frame: &mut Frame, area: Rect, app: &mut App) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Polar (heading keys / calibration: next PRs)");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let selected = app.selected_mac().map(str::to_string);
+    polar::paint_polar(
+        frame.buffer_mut(),
+        inner,
+        &app.devices,
+        app.heading_deg,
+        selected.as_deref(),
+        &mut app.scale,
+    );
 }
 
 fn draw_table(frame: &mut Frame, area: Rect, app: &App) {

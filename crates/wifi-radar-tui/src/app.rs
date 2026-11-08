@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 use wifi_radar_core::{DeviceStore, ScanBackend, ScanError, WifiDevice};
 use wifi_radar_linux::{IwCliBackend, Nl80211Backend};
 
+use crate::polar::ScaleState;
+
 /// How the TUI obtains scan samples.
 pub enum ScanSource {
     /// Prefer genetlink GET_SCAN; fall back to `iw` on error.
@@ -26,6 +28,10 @@ pub struct App {
     pub source: ScanSource,
     /// Last successful live backend name (`nl80211` / `iw-cli`), if any.
     pub last_backend: Option<&'static str>,
+    /// Compass heading in degrees (rotation keys land in a follow-up PR).
+    pub heading_deg: f64,
+    /// Auto-scale hysteresis for polar rings.
+    pub scale: ScaleState,
     pub should_quit: bool,
     last_scan: Instant,
     scan_interval: Duration,
@@ -54,10 +60,17 @@ impl App {
             iface,
             source,
             last_backend: None,
+            heading_deg: 0.0,
+            scale: ScaleState::default(),
             should_quit: false,
             last_scan: Instant::now() - Duration::from_secs(60),
             scan_interval: Duration::from_secs(8),
         }
+    }
+
+    /// MAC of the currently selected device, if any.
+    pub fn selected_mac(&self) -> Option<&str> {
+        self.devices.get(self.selected).map(|d| d.mac.as_str())
     }
 
     /// Header label for the active / preferred backend.

@@ -1,6 +1,7 @@
 //! Ratatui primary UI for wifi-radar (MVP list view).
 
 mod app;
+mod polar;
 mod ui;
 
 use std::env;
