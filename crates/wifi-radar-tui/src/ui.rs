@@ -37,10 +37,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
             "v{}  iface={}  backend={}",
             env!("CARGO_PKG_VERSION"),
             app.iface,
-            match &app.source {
-                crate::app::ScanSource::Demo => "demo",
-                crate::app::ScanSource::Iw(_) => "iw-cli",
-            }
+            app.backend_label()
         )),
     ]);
     let block = Block::default()
