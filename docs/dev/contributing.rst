@@ -131,5 +131,9 @@ The comment should state what was reviewed, what verification was used
 (CI, ``cargo test``, ``sphinx-build -W``, etc.), and any residual risk
 explicitly accepted. A bare “LGTM” / empty approve is not enough.
 
+If GitHub refuses self-approve (same author/reviewer), post that
+rationale as a PR review **comment** (or issue comment) before merging;
+the written explanation is the audit trail.
+
 Prefer merge or rebase merges that preserve atomic commits on ``main``;
 do not squash a stack that was authored as separate reviewable steps.
