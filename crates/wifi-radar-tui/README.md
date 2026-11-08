@@ -13,11 +13,15 @@ cargo run -p wifi-radar-tui -- -i wlan0
 ```
 
 Keys: `h`/`l` heading (±5°), `H`/`L` fast (±15°), `j`/`k` select,
-`g`/`G` first/last, `Esc` deselect, `r` rescan, `q` quit.
+`g`/`G` first/last, `Esc` deselect, `r` rescan, `q` quit, `:` command.
+
+Commands: `:mode honest` / `:mode anchor` (persisted), `:r` rescan,
+`:q` quit.
 
 With a device selected: `8`/`4`/`6`/`2` pin ahead/left/right/behind,
 `D`/`d` distance calib at 0.25 m / 1 m, `x` clear calibration
 (persisted under `~/.cache/wifi_radar/calibration.json` in live mode).
+Header shows the active calibration mode.
 
 Live mode tries genetlink `nl80211` first; if that errors, the same pass
 falls back to `iw-cli`. Status line shows which backend won.
