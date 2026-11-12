@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "timestamp_wall": 1700000200.3,
+  "timestamp_mono": 30.1,
+  "device_observations": [
+    {
+      "mac": "aa:aa:aa:00:00:20",
+      "kind": "hotspot",
+      "rssi_dbm": -40.48455006504028,
+      "channel": 6,
+      "freq_mhz": 2437,
+      "bearing_deg": 153.434948822922,
+      "bearing_confidence": 0.9,
+      "label": "Hybrid-AP",
+      "vendor": "TestOUI"
+    }
+  ],
+  "node_id": "node-b",
+  "node_pose": {
+    "x": 4.0,
+    "y": 0.0,
+    "z": 1.0,
+    "heading_deg": 180.0
+  }
+}
