@@ -159,6 +159,26 @@ impl PyCalibrationStore {
         self.inner.manual_bearing(mac)
     }
 
+    /// True when `mac` has a stored manual bearing pin.
+    fn has_manual_bearing(&self, mac: &str) -> bool {
+        self.inner.has_manual_bearing(mac)
+    }
+
+    /// RSSI-at-1m override for `mac`, if any.
+    fn rssi_at_1m(&self, mac: &str) -> Option<f64> {
+        self.inner.rssi_at_1m(mac)
+    }
+
+    /// Distance anchor metres for `mac`, if any.
+    fn distance_anchor_m(&self, mac: &str) -> Option<f64> {
+        self.inner.distance_anchor_m(mac)
+    }
+
+    /// True when `mac` has a stored distance / RSSI-at-1m calibration.
+    fn has_distance_calibration(&self, mac: &str) -> bool {
+        self.inner.has_distance_calibration(mac)
+    }
+
     /// Calibrate distance so current RSSI maps to `distance_m`. Returns 1 m ref.
     fn set_distance_reference(
         &mut self,
@@ -266,6 +286,8 @@ mod tests {
             let mut cal = PyCalibrationStore::memory();
             cal.set_distance_reference("aa:aa:aa:00:00:01", -40.0, 1.0)
                 .unwrap();
+            assert!(cal.has_distance_calibration("aa:aa:aa:00:00:01"));
+            assert!(cal.rssi_at_1m("aa:aa:aa:00:00:01").is_some());
             let (rows, summary) = store.snapshot_calibrated(py, &cal).unwrap();
             assert_eq!(rows.len(), 2);
             let mode: String = summary
