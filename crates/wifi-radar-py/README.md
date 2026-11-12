@@ -23,6 +23,7 @@ store.merge_hotspot("aa:bb:cc:dd:ee:01", -42.0, ssid="Demo", channel=6)
 cal = wrn.CalibrationStore.memory()
 cal.set_distance_reference("aa:bb:cc:dd:ee:01", -42.0, 1.0)
 cal.set_mode("honest")
+assert cal.has_distance_calibration("aa:bb:cc:dd:ee:01")
 rows, summary = store.snapshot_calibrated(cal)
 print(summary["short_label"])
 for row in rows:
@@ -30,7 +31,9 @@ for row in rows:
 ```
 
 `CalibrationStore()` loads `~/.cache/wifi_radar/calibration.json` (same file as
-the TUI / Python curses app). Use `.memory()` for tests.
+the TUI / Python curses app). Use `.memory()` for tests. The Python package
+prefers this façade via ``wifi_radar.calib_bridge`` when the extension is
+installed.
 
 Passive observation helpers only — no injection, deauth, or association.
 The full interactive app remains the Python curses `wifi-radar` script and the
