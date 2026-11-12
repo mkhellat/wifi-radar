@@ -117,10 +117,15 @@ Key design decisions
   Devices move on the radar as signal strength changes. Stale devices expire
   after a configurable TTL (default 30 seconds).
 
-**Scene correction is layered after snapshot (Python).**
+**Scene correction is layered after snapshot.**
   Per-MAC calibration is applied in ``DeviceStore.snapshot()`` first, then
-  ``correction.py`` derives optional scene-wide distance/bearing adjustments
-  from visible anchors based on the active calibration mode.
+  ``correction.apply_scene_corrections()`` derives optional scene-wide
+  distance/bearing adjustments from visible anchors based on the active
+  calibration mode. When ``wifi_radar_native`` is installed and
+  ``native_scene_ready()`` is true (native ``CalibrationStore`` plus
+  ``apply_scene_corrections``), the curses path prefers the Rust engine via
+  dict round-trip; otherwise the pure-Python implementation runs. EMA merge
+  in ``DeviceStore`` remains Python for now.
 
 **Heading rotates the plot.**
   Device bearings are rendered as ``bearing - heading``, so "forward" (the
