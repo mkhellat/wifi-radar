@@ -38,7 +38,10 @@ def core_version() -> str | None:
 
 def describe() -> dict[str, Any]:
     """Small status dict for diagnostics / docs examples."""
+    from wifi_radar.calib_bridge import native_calibration_ready
+
     return {
         "available": available(),
         "version": core_version(),
+        "calibration_store": native_calibration_ready(),
     }

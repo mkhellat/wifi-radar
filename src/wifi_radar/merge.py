@@ -5,12 +5,15 @@ from __future__ import annotations
 import time
 from copy import copy
 
+from wifi_radar.calib_bridge import NativeCalibrationStore, make_calibration_store
 from wifi_radar.calibration import CalibrationStore
 from wifi_radar.models import DeviceKind, WifiDevice
 from wifi_radar.util import normalize_mac
 
 DEFAULT_TTL_SEC = 30.0
 RSSI_EMA_ALPHA = 0.25  # smoother RSSI (was 0.4 — too jumpy at close range)
+
+CalibrationBackend = CalibrationStore | NativeCalibrationStore
 
 
 class DeviceStore:
@@ -19,11 +22,11 @@ class DeviceStore:
     def __init__(
         self,
         ttl: float = DEFAULT_TTL_SEC,
-        calibration: CalibrationStore | None = None,
+        calibration: CalibrationBackend | None = None,
     ) -> None:
         self._devices: dict[str, WifiDevice] = {}
         self._ttl = ttl
-        self.calibration = calibration or CalibrationStore()
+        self.calibration = calibration or make_calibration_store()
 
     @property
     def devices(self) -> dict[str, WifiDevice]:
