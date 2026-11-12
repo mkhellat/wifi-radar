@@ -778,6 +778,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wifi-radar-fuse"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wifi-radar-core",
+]
+
+[[package]]
 name = "wifi-radar-linux"
 version = "0.1.0"
 dependencies = [
