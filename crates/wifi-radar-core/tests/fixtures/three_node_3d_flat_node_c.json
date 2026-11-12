@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "timestamp_wall": 1700000310.4,
+  "timestamp_mono": 41.2,
+  "device_observations": [
+    {
+      "mac": "aa:aa:aa:00:00:31",
+      "kind": "hotspot",
+      "rssi_dbm": -39.03089986991944,
+      "channel": 6,
+      "freq_mhz": 2437,
+      "bearing_confidence": 0.0,
+      "label": "Flat-AP",
+      "vendor": "TestOUI"
+    }
+  ],
+  "node_id": "node-c",
+  "node_pose": { "x": 2.0, "y": 3.0, "z": 1.0, "heading_deg": 270.0 }
+}
