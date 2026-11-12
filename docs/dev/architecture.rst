@@ -26,8 +26,9 @@ façade rather than a second full implementation.
 **ScanBackend** is shared in intent: Ratatui prefers genetlink
 ``Nl80211Backend`` (cached GET_SCAN dump) and falls back to
 ``IwCliBackend`` per pass on error. ``Nl80211Backend`` issues
-``TRIGGER_SCAN`` when permitted, then dumps; otherwise it dumps the
-existing cache.
+``TRIGGER_SCAN`` when permitted, waits for multicast
+``NEW_SCAN_RESULTS`` (with a timed sleep fallback), then dumps;
+otherwise it dumps the existing cache.
 
 **DeviceStore** semantics (EMA α=0.25, TTL 30 s, strongest-first snapshot)
 are shared in intent: Rust ``wifi-radar-core`` for Ratatui/PyO3; Python
