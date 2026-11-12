@@ -132,13 +132,15 @@ pub fn range_m_from_observation(dev: &DeviceObservation) -> f64 {
     10f64.powf(exponent).clamp(0.1, 120.0)
 }
 
-/// Outcome of a 2D fusion attempt.
+/// Outcome of a fusion attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FuseStatus {
-    /// Enough nodes to produce a position.
+    /// Enough nodes and geometry to produce a position.
     Ok,
-    /// Fewer than two distinct node poses.
+    /// Fewer than the solver's minimum distinct node poses.
     InsufficientNodes,
+    /// Enough nodes, but geometry/residuals fail the go/no-go gate (3D).
+    InsufficientGeometry,
 }
 
 /// Best-effort 2D fused position.
@@ -178,6 +180,7 @@ fn distinct_sightings(target: &AssociatedTarget) -> Vec<&NodeSighting> {
         let dup = used.iter().any(|u| {
             (u.node_pose.x - s.node_pose.x).abs() < 1e-6
                 && (u.node_pose.y - s.node_pose.y).abs() < 1e-6
+                && (u.node_pose.z - s.node_pose.z).abs() < 1e-6
         });
         if !dup {
             used.push(s);
@@ -485,6 +488,201 @@ pub fn fuse_hybrid_bearing_range_2d(
     associate_observations(batches, window_sec)
         .iter()
         .map(hybrid_bearing_range_2d)
+        .filter(|p| p.status == FuseStatus::Ok)
+        .collect()
+}
+
+/// Minimum distinct sensing nodes for a 3D attempt.
+pub const MIN_NODES_3D: usize = 3;
+/// Minimum vertical span among node poses (metres) for 3D go.
+pub const MIN_VERTICAL_SEP_M: f64 = 0.5;
+/// Maximum post-solve RMS range residual (metres) for 3D go.
+pub const MAX_RESIDUAL_RMS_3D_M: f64 = 1.0;
+
+/// Best-effort 3D fused position (gated).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FusedPosition3D {
+    /// Target MAC.
+    pub mac: String,
+    /// Estimated X (metres).
+    pub x: f64,
+    /// Estimated Y (metres).
+    pub y: f64,
+    /// Estimated Z (metres).
+    pub z: f64,
+    /// Scalar confidence in \[0, 1\].
+    pub confidence: f64,
+    /// RMS range residual in metres after the solve.
+    pub residual_rms_m: f64,
+    /// Number of contributing nodes.
+    pub contributing_nodes: usize,
+    /// Vertical span of contributing node poses (metres).
+    pub vertical_span_m: f64,
+    /// Solve / go-no-go status.
+    pub status: FuseStatus,
+}
+
+fn insufficient_3d(mac: String, n: usize, status: FuseStatus, vertical_span_m: f64) -> FusedPosition3D {
+    FusedPosition3D {
+        mac,
+        x: f64::NAN,
+        y: f64::NAN,
+        z: f64::NAN,
+        confidence: 0.0,
+        residual_rms_m: f64::NAN,
+        contributing_nodes: n,
+        vertical_span_m,
+        status,
+    }
+}
+
+fn vertical_span_m(used: &[&NodeSighting]) -> f64 {
+    let mut zmin = f64::INFINITY;
+    let mut zmax = f64::NEG_INFINITY;
+    for s in used {
+        zmin = zmin.min(s.node_pose.z);
+        zmax = zmax.max(s.node_pose.z);
+    }
+    if !zmin.is_finite() {
+        return 0.0;
+    }
+    zmax - zmin
+}
+
+fn residual_rms_3d(used: &[&NodeSighting], x: f64, y: f64, z: f64) -> f64 {
+    if used.is_empty() {
+        return f64::NAN;
+    }
+    let mut acc = 0.0;
+    for s in used {
+        let r = range_m_from_observation(&s.device);
+        let dx = x - s.node_pose.x;
+        let dy = y - s.node_pose.y;
+        let dz = z - s.node_pose.z;
+        let d = (dx * dx + dy * dy + dz * dz).sqrt();
+        let e = d - r;
+        acc += e * e;
+    }
+    (acc / used.len() as f64).sqrt()
+}
+
+fn solve_3x3(m: [[f64; 3]; 3], b: [f64; 3]) -> Option<[f64; 3]> {
+    let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    let inv_det = 1.0 / det;
+    let mut adj = [[0.0; 3]; 3];
+    adj[0][0] = (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * inv_det;
+    adj[0][1] = (m[0][2] * m[2][1] - m[0][1] * m[2][2]) * inv_det;
+    adj[0][2] = (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * inv_det;
+    adj[1][0] = (m[1][2] * m[2][0] - m[1][0] * m[2][2]) * inv_det;
+    adj[1][1] = (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * inv_det;
+    adj[1][2] = (m[0][2] * m[1][0] - m[0][0] * m[1][2]) * inv_det;
+    adj[2][0] = (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * inv_det;
+    adj[2][1] = (m[0][1] * m[2][0] - m[0][0] * m[2][1]) * inv_det;
+    adj[2][2] = (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * inv_det;
+    Some([
+        adj[0][0] * b[0] + adj[0][1] * b[1] + adj[0][2] * b[2],
+        adj[1][0] * b[0] + adj[1][1] * b[1] + adj[1][2] * b[2],
+        adj[2][0] * b[0] + adj[2][1] * b[1] + adj[2][2] * b[2],
+    ])
+}
+
+/// RSSI-only 3D multilateration with an explicit go/no-go gate.
+///
+/// **Go** requires ≥[`MIN_NODES_3D`] distinct poses, vertical span
+/// ≥[`MIN_VERTICAL_SEP_M`], and post-solve RMS residual
+/// ≤[`MAX_RESIDUAL_RMS_3D_M`]. Otherwise returns
+/// [`FuseStatus::InsufficientNodes`] or [`FuseStatus::InsufficientGeometry`].
+///
+/// Research / lab helper only — not a survey-grade or product 3D claim.
+pub fn multilateration_3d(target: &AssociatedTarget) -> FusedPosition3D {
+    let mac = target.mac.clone();
+    let used = distinct_sightings(target);
+    let span = vertical_span_m(&used);
+    if used.len() < MIN_NODES_3D {
+        return insufficient_3d(mac, used.len(), FuseStatus::InsufficientNodes, span);
+    }
+    if span < MIN_VERTICAL_SEP_M {
+        return insufficient_3d(mac, used.len(), FuseStatus::InsufficientGeometry, span);
+    }
+
+    // Seed XY from 2D mlat; Z from mean node height.
+    let seed2 = multilateration_2d(target);
+    let mut x = if seed2.status == FuseStatus::Ok {
+        seed2.x
+    } else {
+        used.iter().map(|s| s.node_pose.x).sum::<f64>() / used.len() as f64
+    };
+    let mut y = if seed2.status == FuseStatus::Ok {
+        seed2.y
+    } else {
+        used.iter().map(|s| s.node_pose.y).sum::<f64>() / used.len() as f64
+    };
+    let mut z = used.iter().map(|s| s.node_pose.z).sum::<f64>() / used.len() as f64;
+
+    for _ in 0..MLAT_MAX_ITERS {
+        let mut jtj = [[0.0_f64; 3]; 3];
+        let mut jte = [0.0_f64; 3];
+        for s in &used {
+            let r = range_m_from_observation(&s.device);
+            let dx = x - s.node_pose.x;
+            let dy = y - s.node_pose.y;
+            let dz = z - s.node_pose.z;
+            let d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-6);
+            let e = d - r;
+            let j = [dx / d, dy / d, dz / d];
+            for row in 0..3 {
+                for col in 0..3 {
+                    jtj[row][col] += j[row] * j[col];
+                }
+                jte[row] += j[row] * (-e);
+            }
+        }
+        let Some(step) = solve_3x3(jtj, jte) else {
+            break;
+        };
+        x += step[0];
+        y += step[1];
+        z += step[2];
+        if (step[0] * step[0] + step[1] * step[1] + step[2] * step[2]).sqrt() < MLAT_TOL {
+            break;
+        }
+    }
+
+    let rms = residual_rms_3d(&used, x, y, z);
+    if !rms.is_finite() || rms > MAX_RESIDUAL_RMS_3D_M {
+        return insufficient_3d(mac, used.len(), FuseStatus::InsufficientGeometry, span);
+    }
+
+    let resid_term = (1.0 / (1.0 + rms / 2.0)).clamp(0.05, 1.0);
+    let vert_term = (span / MIN_VERTICAL_SEP_M).clamp(0.5, 1.25).min(1.0);
+    let confidence = (geometry_confidence(&used) * resid_term * vert_term).clamp(0.0, 1.0);
+
+    FusedPosition3D {
+        mac,
+        x,
+        y,
+        z,
+        confidence,
+        residual_rms_m: rms,
+        contributing_nodes: used.len(),
+        vertical_span_m: span,
+        status: FuseStatus::Ok,
+    }
+}
+
+/// Associate then run gated 3D multilateration for every successful solve.
+pub fn fuse_multilateration_3d(
+    batches: &[NodeObservation],
+    window_sec: f64,
+) -> Vec<FusedPosition3D> {
+    associate_observations(batches, window_sec)
+        .iter()
+        .map(multilateration_3d)
         .filter(|p| p.status == FuseStatus::Ok)
         .collect()
 }
@@ -818,5 +1016,84 @@ mod tests {
         assert_eq!(hybrid.len(), 1);
         assert!((mlat[0].x - hybrid[0].x).abs() < 1e-6);
         assert!((mlat[0].y - hybrid[0].y).abs() < 1e-6);
+    }
+
+    fn obs_xyz(
+        node_id: &str,
+        t: f64,
+        x: f64,
+        y: f64,
+        z: f64,
+        mac: &str,
+        rssi: f64,
+    ) -> NodeObservation {
+        let mut o = obs(node_id, t, x, y, mac, DeviceKind::Hotspot, rssi);
+        o.node_pose.z = z;
+        o
+    }
+
+    fn dist3(ax: f64, ay: f64, az: f64, bx: f64, by: f64, bz: f64) -> f64 {
+        ((ax - bx).hypot(ay - by)).hypot(az - bz)
+    }
+
+    #[test]
+    fn multilateration_3d_recovers_known_point_with_vertical_span() {
+        let (tx, ty, tz) = (2.0_f64, 1.0_f64, 1.5_f64);
+        let nodes = [
+            ("a", 0.0, 0.0, 0.5),
+            ("b", 4.0, 0.0, 0.5),
+            ("c", 2.0, 3.0, 2.5),
+        ];
+        let batches: Vec<_> = nodes
+            .iter()
+            .map(|(id, nx, ny, nz)| {
+                let d = dist3(tx, ty, tz, *nx, *ny, *nz);
+                obs_xyz(id, 100.0, *nx, *ny, *nz, "aa:bb:00:00:00:01", rssi_for_hotspot_range(d))
+            })
+            .collect();
+        let fused = fuse_multilateration_3d(&batches, DEFAULT_FUSION_WINDOW_SEC);
+        assert_eq!(fused.len(), 1);
+        let p = &fused[0];
+        assert_eq!(p.status, FuseStatus::Ok);
+        assert!(
+            (p.x - tx).abs() < 0.1 && (p.y - ty).abs() < 0.1 && (p.z - tz).abs() < 0.15,
+            "got ({}, {}, {}), residual={}",
+            p.x,
+            p.y,
+            p.z,
+            p.residual_rms_m
+        );
+        assert!(p.vertical_span_m >= MIN_VERTICAL_SEP_M);
+        assert!(p.residual_rms_m <= MAX_RESIDUAL_RMS_3D_M);
+    }
+
+    #[test]
+    fn multilateration_3d_no_go_without_vertical_span() {
+        let (tx, ty, tz) = (2.0_f64, 1.0_f64, 1.0_f64);
+        let nodes = [
+            ("a", 0.0, 0.0, 1.0),
+            ("b", 4.0, 0.0, 1.0),
+            ("c", 2.0, 3.0, 1.0),
+        ];
+        let batches: Vec<_> = nodes
+            .iter()
+            .map(|(id, nx, ny, nz)| {
+                let d = dist3(tx, ty, tz, *nx, *ny, *nz);
+                obs_xyz(id, 100.0, *nx, *ny, *nz, "aa:bb:00:00:00:01", rssi_for_hotspot_range(d))
+            })
+            .collect();
+        let targets = associate_observations(&batches, DEFAULT_FUSION_WINDOW_SEC);
+        let p = multilateration_3d(&targets[0]);
+        assert_eq!(p.status, FuseStatus::InsufficientGeometry);
+        assert!(p.vertical_span_m < MIN_VERTICAL_SEP_M);
+    }
+
+    #[test]
+    fn multilateration_3d_needs_three_nodes() {
+        let a = obs_xyz("a", 100.0, 0.0, 0.0, 0.5, "aa:bb:00:00:00:01", -40.0);
+        let b = obs_xyz("b", 100.0, 4.0, 0.0, 2.0, "aa:bb:00:00:00:01", -45.0);
+        let targets = associate_observations(&[a, b], DEFAULT_FUSION_WINDOW_SEC);
+        let p = multilateration_3d(&targets[0]);
+        assert_eq!(p.status, FuseStatus::InsufficientNodes);
     }
 }
