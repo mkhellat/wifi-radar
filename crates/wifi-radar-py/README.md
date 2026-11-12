@@ -28,6 +28,9 @@ rows, summary = store.snapshot_calibrated(cal)
 print(summary["short_label"])
 for row in rows:
     print(row["mac"], row["distance_m"], row.get("correction_note"))
+
+# Or correct an already-built snapshot list of dicts:
+rows, summary = wrn.apply_scene_corrections(rows, cal)
 ```
 
 `CalibrationStore()` loads `~/.cache/wifi_radar/calibration.json` (same file as
