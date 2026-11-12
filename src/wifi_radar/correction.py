@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import dataclass
 from statistics import median
+from typing import Any
 
-from wifi_radar.calib_bridge import NativeCalibrationStore
+from wifi_radar.calib_bridge import (
+    NativeCalibrationStore,
+    native_scene_ready,
+)
 from wifi_radar.calibration import CalibrationMode, CalibrationStore
 from wifi_radar.models import (
     PATH_LOSS_EXPONENT_INDOOR,
@@ -14,6 +19,7 @@ from wifi_radar.models import (
     DeviceKind,
     WifiDevice,
 )
+from wifi_radar.native import native
 
 CalibrationBackend = CalibrationStore | NativeCalibrationStore
 
@@ -114,12 +120,85 @@ def _build_anchor_diagnostic(
     )
 
 
-def apply_scene_corrections(
+def device_to_native_dict(dev: WifiDevice) -> dict[str, Any]:
+    """Serialize a :class:`WifiDevice` for ``wifi_radar_native`` scene APIs."""
+
+    return {
+        "mac": dev.mac,
+        "kind": dev.kind.value,
+        "ssid": dev.ssid,
+        "channel": dev.channel,
+        "freq_mhz": dev.freq_mhz,
+        "rssi_dbm": dev.rssi_dbm,
+        "calibrated_bearing_deg": dev.bearing_deg,
+        "bearing_override_deg": dev.bearing_override_deg,
+        "bearing_confidence": dev.bearing_confidence,
+        "bearing_manual": dev.bearing_manual,
+        "distance_override_m": dev.distance_override_m,
+        "rssi_at_1m_override": dev.rssi_at_1m_override,
+        "anchor_status": dev.anchor_status,
+        "correction_note": dev.correction_note,
+    }
+
+
+def device_from_native_row(row: dict[str, Any], template: WifiDevice) -> WifiDevice:
+    """Merge native scene-correction fields back onto a snapshot copy."""
+
+    out = copy(template)
+    if "calibrated_bearing_deg" in row:
+        cal_b = row["calibrated_bearing_deg"]
+        out.bearing_deg = None if cal_b is None else float(cal_b)
+    if "bearing_override_deg" in row:
+        ov = row["bearing_override_deg"]
+        out.bearing_override_deg = None if ov is None else float(ov)
+    if "distance_override_m" in row:
+        dist = row["distance_override_m"]
+        out.distance_override_m = None if dist is None else float(dist)
+    if "rssi_at_1m_override" in row:
+        ref = row["rssi_at_1m_override"]
+        out.rssi_at_1m_override = None if ref is None else float(ref)
+    if "bearing_manual" in row and row["bearing_manual"] is not None:
+        out.bearing_manual = bool(row["bearing_manual"])
+    if "bearing_confidence" in row and row["bearing_confidence"] is not None:
+        out.bearing_confidence = float(row["bearing_confidence"])
+    if "anchor_status" in row and row["anchor_status"] is not None:
+        out.anchor_status = str(row["anchor_status"])
+    if "correction_note" in row and row["correction_note"] is not None:
+        out.correction_note = str(row["correction_note"])
+    return out
+
+
+def _summary_from_native(summary: dict[str, Any]) -> CorrectionSummary:
+    mode_raw = str(summary.get("mode", "honest"))
+    mode: CalibrationMode = "anchor" if mode_raw == "anchor" else "honest"
+    return CorrectionSummary(
+        mode=mode,
+        visible_anchors=int(summary.get("visible_anchors", 0)),
+        active_anchors=int(summary.get("active_anchors", 0)),
+        distance_scale=float(summary.get("distance_scale", 1.0)),
+        bearing_offset_deg=float(summary.get("bearing_offset_deg", 0.0)),
+    )
+
+
+def _apply_scene_corrections_native(
+    devices: list[WifiDevice],
+    calibration: NativeCalibrationStore,
+) -> tuple[list[WifiDevice], CorrectionSummary]:
+    assert native is not None
+    rows_in = [device_to_native_dict(d) for d in devices]
+    rows_out, summary_raw = native.apply_scene_corrections(rows_in, calibration.py_store)
+    by_mac = {str(r["mac"]): r for r in rows_out}
+    out: list[WifiDevice] = []
+    for dev in devices:
+        row = by_mac.get(dev.mac)
+        out.append(device_from_native_row(row, dev) if row is not None else dev)
+    return out, _summary_from_native(summary_raw)
+
+
+def _apply_scene_corrections_python(
     devices: list[WifiDevice],
     calibration: CalibrationBackend,
 ) -> tuple[list[WifiDevice], CorrectionSummary]:
-    """Apply scene correction heuristics to snapshot copies."""
-
     mode = calibration.mode()
     diagnostics: list[AnchorDiagnostic] = []
     for dev in devices:
@@ -172,3 +251,19 @@ def apply_scene_corrections(
             dev.correction_note = "scene anchor"
 
     return devices, summary
+
+
+def apply_scene_corrections(
+    devices: list[WifiDevice],
+    calibration: CalibrationBackend,
+) -> tuple[list[WifiDevice], CorrectionSummary]:
+    """Apply scene correction heuristics to snapshot copies.
+
+    Prefers ``wifi_radar_native.apply_scene_corrections`` when the extension
+    and a :class:`NativeCalibrationStore` are available; otherwise uses the
+    pure-Python implementation.
+    """
+
+    if isinstance(calibration, NativeCalibrationStore) and native_scene_ready():
+        return _apply_scene_corrections_native(devices, calibration)
+    return _apply_scene_corrections_python(devices, calibration)
