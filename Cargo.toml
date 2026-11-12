@@ -5,6 +5,7 @@ members = [
     "crates/wifi-radar-linux",
     "crates/wifi-radar-tui",
     "crates/wifi-radar-py",
+    "crates/wifi-radar-fuse",
 ]
 
 [workspace.package]
