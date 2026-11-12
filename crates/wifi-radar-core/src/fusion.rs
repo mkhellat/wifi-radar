@@ -269,22 +269,66 @@ const MLAT_MAX_ITERS: usize = 25;
 /// Relative step size stop for multilateration.
 const MLAT_TOL: f64 = 1e-6;
 
-/// RSSI-only 2D multilateration (Gauss-Newton), seeded by the weighted centroid.
+/// Default Tukey biweight cutoff (metres) for robust range residuals.
+pub const DEFAULT_TUKEY_DELTA_M: f64 = 3.0;
+
+/// IRLS weight for a residual under Huber loss with threshold `delta`.
 ///
-/// Minimizes `Σ (‖p − node_i‖ − r_i)²` with unit weights. With only two nodes
-/// the problem is underdetermined off the baseline; the seed keeps the solve
-/// on that line. Prefer ≥3 non-collinear nodes for a stable 2D fix.
-pub fn multilateration_2d(target: &AssociatedTarget) -> FusedPosition2D {
+/// Returns `1` when `|e| ≤ delta`, otherwise `delta / |e|`.
+pub fn huber_weight(residual: f64, delta: f64) -> f64 {
+    let delta = delta.max(1e-9);
+    let ae = residual.abs();
+    if ae <= delta {
+        1.0
+    } else {
+        delta / ae
+    }
+}
+
+/// IRLS weight for Tukey biweight loss (hard reject beyond `delta`).
+///
+/// Returns `(1 - (e/delta)²)²` when `|e| < delta`, otherwise `0`.
+pub fn tukey_weight(residual: f64, delta: f64) -> f64 {
+    let delta = delta.max(1e-9);
+    let ae = residual.abs();
+    if ae >= delta {
+        return 0.0;
+    }
+    let u = ae / delta;
+    let t = 1.0 - u * u;
+    t * t
+}
+
+fn multilateration_2d_irls(target: &AssociatedTarget, tukey_delta: Option<f64>) -> FusedPosition2D {
     let seed = weighted_centroid_2d(target);
     if seed.status != FuseStatus::Ok {
         return seed;
     }
     let used = distinct_sightings(target);
-    let mut x = seed.x;
-    let mut y = seed.y;
+    // Robust IRLS: avoid RSSI-weighted centroid seed (a false close range can
+    // dominate). Start from the coordinate-wise median of node poses.
+    let (mut x, mut y) = if tukey_delta.is_some() {
+        let mut xs: Vec<f64> = used.iter().map(|s| s.node_pose.x).collect();
+        let mut ys: Vec<f64> = used.iter().map(|s| s.node_pose.y).collect();
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        ys.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mid = used.len() / 2;
+        let mx = if used.len() % 2 == 0 {
+            (xs[mid - 1] + xs[mid]) / 2.0
+        } else {
+            xs[mid]
+        };
+        let my = if used.len() % 2 == 0 {
+            (ys[mid - 1] + ys[mid]) / 2.0
+        } else {
+            ys[mid]
+        };
+        (mx, my)
+    } else {
+        (seed.x, seed.y)
+    };
 
     for _ in 0..MLAT_MAX_ITERS {
-        // Normal equations JᵀJ δ = Jᵀ(-e) for 2 unknowns.
         let mut jtj00 = 0.0;
         let mut jtj01 = 0.0;
         let mut jtj11 = 0.0;
@@ -297,13 +341,17 @@ pub fn multilateration_2d(target: &AssociatedTarget) -> FusedPosition2D {
             let dy = y - s.node_pose.y;
             let d = (dx * dx + dy * dy).sqrt().max(1e-6);
             let e = d - r;
+            let w = match tukey_delta {
+                Some(delta) => tukey_weight(e, delta),
+                None => 1.0,
+            };
             let jx = dx / d;
             let jy = dy / d;
-            jtj00 += jx * jx;
-            jtj01 += jx * jy;
-            jtj11 += jy * jy;
-            jte0 += jx * (-e);
-            jte1 += jy * (-e);
+            jtj00 += w * jx * jx;
+            jtj01 += w * jx * jy;
+            jtj11 += w * jy * jy;
+            jte0 += w * jx * (-e);
+            jte1 += w * jy * (-e);
         }
 
         let det = jtj00 * jtj11 - jtj01 * jtj01;
@@ -332,6 +380,23 @@ pub fn multilateration_2d(target: &AssociatedTarget) -> FusedPosition2D {
         contributing_nodes: used.len(),
         status: FuseStatus::Ok,
     }
+}
+
+/// RSSI-only 2D multilateration (Gauss-Newton), seeded by the weighted centroid.
+///
+/// Minimizes `Σ (‖p − node_i‖ − r_i)²` with unit weights. With only two nodes
+/// the problem is underdetermined off the baseline; the seed keeps the solve
+/// on that line. Prefer ≥3 non-collinear nodes for a stable 2D fix.
+pub fn multilateration_2d(target: &AssociatedTarget) -> FusedPosition2D {
+    multilateration_2d_irls(target, None)
+}
+
+/// Like [`multilateration_2d`] but with Tukey biweight IRLS on range residuals.
+pub fn multilateration_2d_robust(
+    target: &AssociatedTarget,
+    tukey_delta_m: f64,
+) -> FusedPosition2D {
+    multilateration_2d_irls(target, Some(tukey_delta_m.max(1e-9)))
 }
 
 /// Minimum `bearing_confidence` required to include a bearing residual.
@@ -378,14 +443,14 @@ fn bearing_residual_m(s: &NodeSighting, x: f64, y: f64) -> Option<(f64, f64, f64
     Some((e, jx, jy))
 }
 
-/// Hybrid bearing + RSSI 2D solve (Gauss-Newton).
-///
-/// Minimizes range residuals plus arc-length bearing residuals when
-/// `bearing_deg` is set and `bearing_confidence` ≥ [`MIN_BEARING_CONFIDENCE`].
-/// Seeded by [`multilateration_2d`]. Bearings are absolute in the shared frame
-/// (0° = +X, CCW). Best-effort 2D only — not survey-grade.
-pub fn hybrid_bearing_range_2d(target: &AssociatedTarget) -> FusedPosition2D {
-    let seed = multilateration_2d(target);
+fn hybrid_bearing_range_2d_irls(
+    target: &AssociatedTarget,
+    tukey_delta: Option<f64>,
+) -> FusedPosition2D {
+    let seed = match tukey_delta {
+        Some(d) => multilateration_2d_robust(target, d),
+        None => multilateration_2d(target),
+    };
     if seed.status != FuseStatus::Ok {
         return seed;
     }
@@ -408,21 +473,29 @@ pub fn hybrid_bearing_range_2d(target: &AssociatedTarget) -> FusedPosition2D {
             let dy = y - s.node_pose.y;
             let d = (dx * dx + dy * dy).sqrt().max(1e-6);
             let e = d - r;
+            let w = match tukey_delta {
+                Some(delta) => tukey_weight(e, delta),
+                None => 1.0,
+            };
             let jx = dx / d;
             let jy = dy / d;
-            jtj00 += jx * jx;
-            jtj01 += jx * jy;
-            jtj11 += jy * jy;
-            jte0 += jx * (-e);
-            jte1 += jy * (-e);
+            jtj00 += w * jx * jx;
+            jtj01 += w * jx * jy;
+            jtj11 += w * jy * jy;
+            jte0 += w * jx * (-e);
+            jte1 += w * jy * (-e);
 
             if let Some((eb, bjx, bjy)) = bearing_residual_m(s, x, y) {
                 bearing_used += 1;
-                jtj00 += bjx * bjx;
-                jtj01 += bjx * bjy;
-                jtj11 += bjy * bjy;
-                jte0 += bjx * (-eb);
-                jte1 += bjy * (-eb);
+                let wb = match tukey_delta {
+                    Some(delta) => tukey_weight(eb, delta),
+                    None => 1.0,
+                };
+                jtj00 += wb * bjx * bjx;
+                jtj01 += wb * bjx * bjy;
+                jtj11 += wb * bjy * bjy;
+                jte0 += wb * bjx * (-eb);
+                jte1 += wb * bjy * (-eb);
             }
         }
 
@@ -454,6 +527,24 @@ pub fn hybrid_bearing_range_2d(target: &AssociatedTarget) -> FusedPosition2D {
         contributing_nodes: used.len(),
         status: FuseStatus::Ok,
     }
+}
+
+/// Hybrid bearing + RSSI 2D solve (Gauss-Newton).
+///
+/// Minimizes range residuals plus arc-length bearing residuals when
+/// `bearing_deg` is set and `bearing_confidence` ≥ [`MIN_BEARING_CONFIDENCE`].
+/// Seeded by [`multilateration_2d`]. Bearings are absolute in the shared frame
+/// (0° = +X, CCW). Best-effort 2D only — not survey-grade.
+pub fn hybrid_bearing_range_2d(target: &AssociatedTarget) -> FusedPosition2D {
+    hybrid_bearing_range_2d_irls(target, None)
+}
+
+/// Like [`hybrid_bearing_range_2d`] with Tukey IRLS on range and bearing residuals.
+pub fn hybrid_bearing_range_2d_robust(
+    target: &AssociatedTarget,
+    tukey_delta_m: f64,
+) -> FusedPosition2D {
+    hybrid_bearing_range_2d_irls(target, Some(tukey_delta_m.max(1e-9)))
 }
 
 /// Associate then run weighted centroid for every target with a successful solve.
@@ -488,6 +579,19 @@ pub fn fuse_hybrid_bearing_range_2d(
     associate_observations(batches, window_sec)
         .iter()
         .map(hybrid_bearing_range_2d)
+        .filter(|p| p.status == FuseStatus::Ok)
+        .collect()
+}
+
+/// Associate then run Tukey-robust 2D multilateration for every successful solve.
+pub fn fuse_multilateration_2d_robust(
+    batches: &[NodeObservation],
+    window_sec: f64,
+    tukey_delta_m: f64,
+) -> Vec<FusedPosition2D> {
+    associate_observations(batches, window_sec)
+        .iter()
+        .map(|t| multilateration_2d_robust(t, tukey_delta_m))
         .filter(|p| p.status == FuseStatus::Ok)
         .collect()
 }
@@ -591,15 +695,10 @@ fn solve_3x3(m: [[f64; 3]; 3], b: [f64; 3]) -> Option<[f64; 3]> {
     ])
 }
 
-/// RSSI-only 3D multilateration with an explicit go/no-go gate.
-///
-/// **Go** requires ≥[`MIN_NODES_3D`] distinct poses, vertical span
-/// ≥[`MIN_VERTICAL_SEP_M`], and post-solve RMS residual
-/// ≤[`MAX_RESIDUAL_RMS_3D_M`]. Otherwise returns
-/// [`FuseStatus::InsufficientNodes`] or [`FuseStatus::InsufficientGeometry`].
-///
-/// Research / lab helper only — not a survey-grade or product 3D claim.
-pub fn multilateration_3d(target: &AssociatedTarget) -> FusedPosition3D {
+fn multilateration_3d_irls(
+    target: &AssociatedTarget,
+    tukey_delta: Option<f64>,
+) -> FusedPosition3D {
     let mac = target.mac.clone();
     let used = distinct_sightings(target);
     let span = vertical_span_m(&used);
@@ -610,8 +709,10 @@ pub fn multilateration_3d(target: &AssociatedTarget) -> FusedPosition3D {
         return insufficient_3d(mac, used.len(), FuseStatus::InsufficientGeometry, span);
     }
 
-    // Seed XY from 2D mlat; Z from mean node height.
-    let seed2 = multilateration_2d(target);
+    let seed2 = match tukey_delta {
+        Some(d) => multilateration_2d_robust(target, d),
+        None => multilateration_2d(target),
+    };
     let mut x = if seed2.status == FuseStatus::Ok {
         seed2.x
     } else {
@@ -634,12 +735,16 @@ pub fn multilateration_3d(target: &AssociatedTarget) -> FusedPosition3D {
             let dz = z - s.node_pose.z;
             let d = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-6);
             let e = d - r;
+            let w = match tukey_delta {
+                Some(delta) => tukey_weight(e, delta),
+                None => 1.0,
+            };
             let j = [dx / d, dy / d, dz / d];
             for row in 0..3 {
                 for col in 0..3 {
-                    jtj[row][col] += j[row] * j[col];
+                    jtj[row][col] += w * j[row] * j[col];
                 }
-                jte[row] += j[row] * (-e);
+                jte[row] += w * j[row] * (-e);
             }
         }
         let Some(step) = solve_3x3(jtj, jte) else {
@@ -673,6 +778,26 @@ pub fn multilateration_3d(target: &AssociatedTarget) -> FusedPosition3D {
         vertical_span_m: span,
         status: FuseStatus::Ok,
     }
+}
+
+/// RSSI-only 3D multilateration with an explicit go/no-go gate.
+///
+/// **Go** requires ≥[`MIN_NODES_3D`] distinct poses, vertical span
+/// ≥[`MIN_VERTICAL_SEP_M`], and post-solve RMS residual
+/// ≤[`MAX_RESIDUAL_RMS_3D_M`]. Otherwise returns
+/// [`FuseStatus::InsufficientNodes`] or [`FuseStatus::InsufficientGeometry`].
+///
+/// Research / lab helper only — not a survey-grade or product 3D claim.
+pub fn multilateration_3d(target: &AssociatedTarget) -> FusedPosition3D {
+    multilateration_3d_irls(target, None)
+}
+
+/// Like [`multilateration_3d`] with Tukey biweight IRLS on range residuals.
+pub fn multilateration_3d_robust(
+    target: &AssociatedTarget,
+    tukey_delta_m: f64,
+) -> FusedPosition3D {
+    multilateration_3d_irls(target, Some(tukey_delta_m.max(1e-9)))
 }
 
 /// Associate then run gated 3D multilateration for every successful solve.
@@ -1095,5 +1220,70 @@ mod tests {
         let targets = associate_observations(&[a, b], DEFAULT_FUSION_WINDOW_SEC);
         let p = multilateration_3d(&targets[0]);
         assert_eq!(p.status, FuseStatus::InsufficientNodes);
+    }
+
+    #[test]
+    fn huber_and_tukey_weights_behave() {
+        assert!((huber_weight(0.5, 2.0) - 1.0).abs() < 1e-12);
+        assert!((huber_weight(4.0, 2.0) - 0.5).abs() < 1e-12);
+        assert!((tukey_weight(0.0, 3.0) - 1.0).abs() < 1e-12);
+        assert!(tukey_weight(3.0, 3.0).abs() < 1e-12);
+        assert!(tukey_weight(4.0, 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn robust_mlat_resists_one_outlier_better_than_l2() {
+        // Three clean nodes for target (2,1); fourth far node claims the target is 0.5 m away.
+        let tx = 2.0_f64;
+        let ty = 1.0_f64;
+        let clean = [
+            ("a", 0.0, 0.0),
+            ("b", 4.0, 0.0),
+            ("c", 2.0, 3.0),
+        ];
+        let mut batches: Vec<_> = clean
+            .iter()
+            .map(|(id, nx, ny)| {
+                let d = (tx - nx).hypot(ty - ny);
+                obs(
+                    id,
+                    100.0,
+                    *nx,
+                    *ny,
+                    "aa:bb:00:00:00:01",
+                    DeviceKind::Hotspot,
+                    rssi_for_hotspot_range(d),
+                )
+            })
+            .collect();
+        batches.push(obs(
+            "outlier",
+            100.0,
+            12.0,
+            12.0,
+            "aa:bb:00:00:00:01",
+            DeviceKind::Hotspot,
+            rssi_for_hotspot_range(0.5),
+        ));
+
+        let l2 = fuse_multilateration_2d(&batches, DEFAULT_FUSION_WINDOW_SEC);
+        let robust = fuse_multilateration_2d_robust(
+            &batches,
+            DEFAULT_FUSION_WINDOW_SEC,
+            DEFAULT_TUKEY_DELTA_M,
+        );
+        assert_eq!(l2.len(), 1);
+        assert_eq!(robust.len(), 1);
+        let err_l2 = (l2[0].x - tx).hypot(l2[0].y - ty);
+        let err_r = (robust[0].x - tx).hypot(robust[0].y - ty);
+        assert!(
+            err_r + 1e-9 < err_l2,
+            "robust err={err_r} should beat l2 err={err_l2} (l2=({}, {}) robust=({}, {}))",
+            l2[0].x,
+            l2[0].y,
+            robust[0].x,
+            robust[0].y
+        );
+        assert!(err_r < 0.15, "robust should stay near truth, err={err_r}");
     }
 }

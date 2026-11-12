@@ -20,11 +20,13 @@ pub use calibration::{CalibrationMode, CalibrationStore};
 pub use correction::{apply_scene_corrections, AnchorDiagnostic, CorrectionSummary};
 pub use fusion::{
     associate_observations, bearing_deg_from_delta, fuse_hybrid_bearing_range_2d,
-    fuse_multilateration_2d, fuse_multilateration_3d, fuse_weighted_centroids,
-    hybrid_bearing_range_2d, multilateration_2d, multilateration_3d, range_m_from_observation,
+    fuse_multilateration_2d, fuse_multilateration_2d_robust, fuse_multilateration_3d,
+    fuse_weighted_centroids, huber_weight, hybrid_bearing_range_2d,
+    hybrid_bearing_range_2d_robust, multilateration_2d, multilateration_2d_robust,
+    multilateration_3d, multilateration_3d_robust, range_m_from_observation, tukey_weight,
     weighted_centroid_2d, AssociatedTarget, FuseStatus, FusedPosition2D, FusedPosition3D,
-    NodeSighting, DEFAULT_FUSION_WINDOW_SEC, MAX_RESIDUAL_RMS_3D_M, MIN_BEARING_CONFIDENCE,
-    MIN_NODES_3D, MIN_VERTICAL_SEP_M,
+    NodeSighting, DEFAULT_FUSION_WINDOW_SEC, DEFAULT_TUKEY_DELTA_M, MAX_RESIDUAL_RMS_3D_M,
+    MIN_BEARING_CONFIDENCE, MIN_NODES_3D, MIN_VERTICAL_SEP_M,
 };
 pub use models::{
     now_unix, placeholder_bearing_for_mac, DeviceKind, WifiDevice, PATH_LOSS_EXPONENT_INDOOR,
