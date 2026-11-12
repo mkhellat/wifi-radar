@@ -5,7 +5,8 @@
 #![deny(missing_docs)]
 
 use std::net::TcpStream;
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use wifi_radar_core::{
     now_unix, write_observation, DeviceObservation, NodeObservation, NodePose, ScanBackend,
@@ -72,6 +73,41 @@ pub fn publish_observation(addr: &str, obs: &NodeObservation) -> Result<(), Stri
     write_observation(&mut stream, obs)
 }
 
+/// Settings for a repeated scan / publish loop.
+#[derive(Debug, Clone)]
+pub struct LoopConfig {
+    /// Sleep between iterations (after each successful `once` call).
+    pub interval: Duration,
+    /// Stop after this many iterations (`None` = run forever).
+    pub count: Option<usize>,
+}
+
+impl LoopConfig {
+    /// Construct a loop config.
+    pub fn new(interval: Duration, count: Option<usize>) -> Self {
+        Self { interval, count }
+    }
+}
+
+/// Call `once` repeatedly with 0-based iteration index; sleep `interval` between runs.
+///
+/// Returns the number of successful iterations. Does not sleep after the final
+/// iteration when `count` is reached.
+pub fn run_observation_loop<F>(cfg: &LoopConfig, mut once: F) -> Result<usize, String>
+where
+    F: FnMut(usize) -> Result<(), String>,
+{
+    let mut n = 0usize;
+    loop {
+        once(n)?;
+        n += 1;
+        if cfg.count.is_some_and(|c| n >= c) {
+            return Ok(n);
+        }
+        thread::sleep(cfg.interval);
+    }
+}
+
 /// Demo / offline devices (no radio) for CI and dry runs.
 pub fn demo_devices() -> Vec<WifiDevice> {
     let mut a = WifiDevice::hotspot("aa:aa:aa:00:00:01", -42.0);
@@ -128,5 +164,57 @@ mod tests {
         let got = server.join().unwrap();
         assert_eq!(got.node_id, "node-pub");
         assert_eq!(got.device_observations.len(), 3);
+    }
+
+    #[test]
+    fn observation_loop_runs_count_times() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_bg = Arc::clone(&hits);
+        let cfg = LoopConfig::new(Duration::from_millis(5), Some(3));
+        let n = run_observation_loop(&cfg, |_| {
+            hits_bg.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn observation_loop_publishes_each_iteration() {
+        use std::io::BufReader;
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use wifi_radar_core::read_observation;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let collected: Arc<Mutex<Vec<NodeObservation>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_bg = Arc::clone(&collected);
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream);
+                let obs = read_observation(&mut reader).unwrap();
+                collected_bg.lock().unwrap().push(obs);
+            }
+        });
+        thread::sleep(Duration::from_millis(20));
+        let cfg_node = NodeConfig::new("node-loop", NodePose::new(0.0, 0.0, 1.0, 0.0));
+        let loop_cfg = LoopConfig::new(Duration::from_millis(10), Some(2));
+        let addr_s = addr.to_string();
+        let n = run_observation_loop(&loop_cfg, |_| {
+            let obs = observation_from_devices(&cfg_node, &demo_devices(), Instant::now());
+            publish_observation(&addr_s, &obs)
+        })
+        .unwrap();
+        assert_eq!(n, 2);
+        server.join().unwrap();
+        let got = collected.lock().unwrap();
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|o| o.node_id == "node-loop"));
     }
 }
