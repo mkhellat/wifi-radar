@@ -9,6 +9,9 @@ use std::fs;
 use std::io::BufReader;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use serde::Serialize;
 use wifi_radar_core::{
@@ -191,6 +194,129 @@ pub fn write_observations_tcp(
     Ok(())
 }
 
+/// Default idle time before fusing a continuous-listen epoch (milliseconds).
+pub const DEFAULT_EPOCH_IDLE_MS: u64 = 500;
+
+/// Settings for continuous TCP listen / idle-epoch fusion.
+#[derive(Debug, Clone)]
+pub struct EpochListenConfig {
+    /// Association wall-clock window (seconds).
+    pub window_sec: f64,
+    /// Solver for each epoch.
+    pub solver: SolverKind,
+    /// Fuse after this much silence since the last observation.
+    pub idle: Duration,
+    /// Stop after this many successful fuse emissions (`None` = run forever).
+    pub max_epochs: Option<usize>,
+}
+
+impl EpochListenConfig {
+    /// Construct with defaults (`DEFAULT_EPOCH_IDLE_MS`, no epoch cap).
+    pub fn new(window_sec: f64, solver: SolverKind) -> Self {
+        Self {
+            window_sec,
+            solver,
+            idle: Duration::from_millis(DEFAULT_EPOCH_IDLE_MS),
+            max_epochs: None,
+        }
+    }
+}
+
+/// Bind `addr` then run [`listen_fuse_epochs_on`].
+///
+/// Returns the bound socket address and the number of epochs emitted.
+pub fn listen_fuse_epochs<A: ToSocketAddrs, F>(
+    addr: A,
+    cfg: EpochListenConfig,
+    emit: F,
+) -> Result<(std::net::SocketAddr, usize), String>
+where
+    F: FnMut(&[FusedTrack]) -> Result<(), String>,
+{
+    let listener = TcpListener::bind(addr).map_err(|e| e.to_string())?;
+    let local = listener.local_addr().map_err(|e| e.to_string())?;
+    let epochs = listen_fuse_epochs_on(listener, cfg, emit)?;
+    Ok((local, epochs))
+}
+
+/// Accept many TCP clients; on idle, fuse buffered observations and call `emit`.
+///
+/// Each client may send one or more NDJSON observations then close. Observations
+/// accumulate across clients until `idle` elapses with no new data, then one
+/// fuse epoch runs and the buffer is cleared. Returns the number of epochs
+/// emitted (useful when `max_epochs` is set).
+pub fn listen_fuse_epochs_on<F>(
+    listener: TcpListener,
+    cfg: EpochListenConfig,
+    mut emit: F,
+) -> Result<usize, String>
+where
+    F: FnMut(&[FusedTrack]) -> Result<(), String>,
+{
+    let local = listener
+        .local_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| "?".into());
+    let (tx, rx) = mpsc::channel::<Result<NodeObservation, String>>();
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            match conn {
+                Ok(stream) => {
+                    let peer = stream
+                        .peer_addr()
+                        .map(|a| a.to_string())
+                        .unwrap_or_else(|_| "?".into());
+                    match read_observations_until_eof(stream) {
+                        Ok(batches) => {
+                            for obs in batches {
+                                if tx.send(Ok(obs)).is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Err(format!("client {peer}: {e}")));
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(format!("accept on {local}: {e}")));
+                    return;
+                }
+            }
+        }
+    });
+
+    let mut batches: Vec<NodeObservation> = Vec::new();
+    let mut epochs = 0usize;
+    loop {
+        match rx.recv_timeout(cfg.idle) {
+            Ok(Ok(obs)) => batches.push(obs),
+            Ok(Err(e)) => return Err(e),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if batches.is_empty() {
+                    continue;
+                }
+                let tracks = fuse_batches(&batches, cfg.window_sec, cfg.solver);
+                emit(&tracks)?;
+                batches.clear();
+                epochs += 1;
+                if cfg.max_epochs.is_some_and(|m| epochs >= m) {
+                    return Ok(epochs);
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                if !batches.is_empty() {
+                    let tracks = fuse_batches(&batches, cfg.window_sec, cfg.solver);
+                    emit(&tracks)?;
+                    epochs += 1;
+                }
+                return Ok(epochs);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +376,52 @@ mod tests {
         write_observations_tcp(&mut client, &batches).unwrap();
         drop(client);
         let tracks = server.join().unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert!((tracks[0].x - 2.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn continuous_listen_fuses_after_idle_across_clients() {
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+        use std::time::Duration;
+
+        let paths = [
+            fixture("three_node_lab_node_a.json"),
+            fixture("three_node_lab_node_b.json"),
+            fixture("three_node_lab_node_c.json"),
+        ];
+        let batches: Vec<NodeObservation> = paths
+            .iter()
+            .map(|p| load_observation_file(p).unwrap())
+            .collect();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let collected: Arc<Mutex<Vec<FusedTrack>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_bg = Arc::clone(&collected);
+        let server = thread::spawn(move || {
+            let mut cfg = EpochListenConfig::new(
+                DEFAULT_FUSION_WINDOW_SEC,
+                SolverKind::Multilateration,
+            );
+            cfg.idle = Duration::from_millis(120);
+            cfg.max_epochs = Some(1);
+            listen_fuse_epochs_on(listener, cfg, |tracks| {
+                collected_bg.lock().unwrap().extend(tracks.iter().cloned());
+                Ok(())
+            })
+        });
+        thread::sleep(Duration::from_millis(30));
+        for obs in &batches {
+            let mut client = TcpStream::connect(addr).unwrap();
+            write_observation(&mut client, obs).unwrap();
+            drop(client);
+            thread::sleep(Duration::from_millis(20));
+        }
+        let epochs = server.join().unwrap().unwrap();
+        assert_eq!(epochs, 1);
+        let tracks = collected.lock().unwrap();
         assert_eq!(tracks.len(), 1);
         assert!((tracks[0].x - 2.0).abs() < 0.05);
     }
