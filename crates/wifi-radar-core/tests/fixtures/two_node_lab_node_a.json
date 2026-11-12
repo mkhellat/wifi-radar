@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "timestamp_wall": 1700000000.0,
+  "timestamp_mono": 10.0,
+  "device_observations": [
+    {
+      "mac": "aa:aa:aa:00:00:01",
+      "kind": "hotspot",
+      "rssi_dbm": -45.0,
+      "channel": 6,
+      "freq_mhz": 2437,
+      "bearing_deg": 30.0,
+      "bearing_confidence": 0.7,
+      "label": "Lab-AP",
+      "vendor": "TestOUI"
+    },
+    {
+      "mac": "aa:aa:aa:00:00:02",
+      "kind": "client",
+      "rssi_dbm": -60.0,
+      "channel": 6,
+      "freq_mhz": 2437,
+      "bearing_confidence": 0.0,
+      "label": "phone",
+      "vendor": ""
+    }
+  ],
+  "node_id": "node-a",
+  "node_pose": {
+    "x": 0.0,
+    "y": 0.0,
+    "z": 1.0,
+    "heading_deg": 0.0
+  }
+}
