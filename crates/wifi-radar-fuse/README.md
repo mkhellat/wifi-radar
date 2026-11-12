@@ -18,6 +18,10 @@ cargo run -p wifi-radar-fuse -- --solver mlat \
 cargo run -p wifi-radar-fuse -- --listen 127.0.0.1:9800 --solver mlat
 # Optional: --idle-ms 500  (silence before an epoch fuse)
 # Optional: --oneshot      (accept one client, fuse once, exit)
+
+# View epochs in Ratatui (keyboard on /dev/tty; stdin is the pipe)
+cargo run -p wifi-radar-fuse -- --listen 127.0.0.1:9800 --solver mlat \
+  | cargo run -p wifi-radar-tui -- --fused
 ```
 
 Solvers: `centroid`, `mlat` (default), `hybrid`, `mlat-robust`.
