@@ -5,7 +5,7 @@ files, associates them in a wall-clock window, and prints fused 2D tracks as
 NDJSON.
 
 Best-effort RF localization only — **not** survey-grade; **not** a product 3D
-claim. A scanning node-agent binary is still separate follow-up work.
+claim. Pair with `wifi-radar-node` (`--publish`) for live observation ingest.
 
 ```bash
 cargo run -p wifi-radar-fuse -- --solver mlat \
