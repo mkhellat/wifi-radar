@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from statistics import median
 
+from wifi_radar.calib_bridge import NativeCalibrationStore
 from wifi_radar.calibration import CalibrationMode, CalibrationStore
+
+CalibrationBackend = CalibrationStore | NativeCalibrationStore
 from wifi_radar.models import (
     PATH_LOSS_EXPONENT_INDOOR,
     RSSI_AT_1M_AP,
@@ -72,7 +75,7 @@ def _distance_from_ref(dev: WifiDevice, ref: float) -> float:
 
 def _build_anchor_diagnostic(
     dev: WifiDevice,
-    calibration: CalibrationStore,
+    calibration: CalibrationBackend,
 ) -> AnchorDiagnostic | None:
     distance_target = calibration.distance_anchor_m(dev.mac)
     distance_scale: float | None = None
@@ -113,7 +116,7 @@ def _build_anchor_diagnostic(
 
 def apply_scene_corrections(
     devices: list[WifiDevice],
-    calibration: CalibrationStore,
+    calibration: CalibrationBackend,
 ) -> tuple[list[WifiDevice], CorrectionSummary]:
     """Apply scene correction heuristics to snapshot copies."""
 
