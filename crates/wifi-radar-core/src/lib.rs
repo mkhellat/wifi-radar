@@ -19,9 +19,9 @@ pub use bearing_calib::{BearingCalibrator, MIN_RSSI_SPREAD_DB, MIN_SAMPLES};
 pub use calibration::{CalibrationMode, CalibrationStore};
 pub use correction::{apply_scene_corrections, AnchorDiagnostic, CorrectionSummary};
 pub use fusion::{
-    associate_observations, fuse_weighted_centroids, range_m_from_observation,
-    weighted_centroid_2d, AssociatedTarget, FuseStatus, FusedPosition2D, NodeSighting,
-    DEFAULT_FUSION_WINDOW_SEC,
+    associate_observations, fuse_multilateration_2d, fuse_weighted_centroids,
+    multilateration_2d, range_m_from_observation, weighted_centroid_2d, AssociatedTarget,
+    FuseStatus, FusedPosition2D, NodeSighting, DEFAULT_FUSION_WINDOW_SEC,
 };
 pub use models::{
     now_unix, placeholder_bearing_for_mac, DeviceKind, WifiDevice, PATH_LOSS_EXPONENT_INDOOR,
