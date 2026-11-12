@@ -22,6 +22,11 @@ class NativeCalibrationStore:
     def __init__(self, inner: Any) -> None:
         self._inner = inner
 
+    @property
+    def py_store(self) -> Any:
+        """Underlying ``wifi_radar_native.CalibrationStore`` instance."""
+        return self._inner
+
     def rssi_at_1m(self, mac: str) -> float | None:
         value = self._inner.rssi_at_1m(mac)
         return None if value is None else float(value)
@@ -88,6 +93,13 @@ def native_calibration_ready() -> bool:
         "has_manual_bearing",
     )
     return all(hasattr(store_cls, name) for name in required)
+
+
+def native_scene_ready() -> bool:
+    """True when native CalibrationStore and apply_scene_corrections exist."""
+    if not native_calibration_ready() or native is None:
+        return False
+    return callable(getattr(native, "apply_scene_corrections", None))
 
 
 def make_calibration_store(
