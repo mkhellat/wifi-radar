@@ -4,10 +4,12 @@
 
 #![deny(missing_docs)]
 
+use std::net::TcpStream;
 use std::time::Instant;
 
 use wifi_radar_core::{
-    now_unix, DeviceObservation, NodeObservation, NodePose, ScanBackend, WifiDevice,
+    now_unix, write_observation, DeviceObservation, NodeObservation, NodePose, ScanBackend,
+    WifiDevice,
 };
 
 /// Configuration for one observation publish.
@@ -64,6 +66,12 @@ pub fn observation_to_ndjson(obs: &NodeObservation) -> Result<String, String> {
     Ok(line + "\n")
 }
 
+/// Connect to a fuse aggregator and write one observation as NDJSON.
+pub fn publish_observation(addr: &str, obs: &NodeObservation) -> Result<(), String> {
+    let mut stream = TcpStream::connect(addr).map_err(|e| format!("connect {addr}: {e}"))?;
+    write_observation(&mut stream, obs)
+}
+
 /// Demo / offline devices (no radio) for CI and dry runs.
 pub fn demo_devices() -> Vec<WifiDevice> {
     let mut a = WifiDevice::hotspot("aa:aa:aa:00:00:01", -42.0);
@@ -96,5 +104,29 @@ mod tests {
         let back = NodeObservation::from_json(line.trim()).unwrap();
         assert_eq!(back.device_observations.len(), 3);
         assert_eq!(back.node_pose.x, 0.0);
+    }
+
+    #[test]
+    fn publish_observation_reaches_listener() {
+        use std::io::BufReader;
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+        use wifi_radar_core::read_observation;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            read_observation(&mut reader).unwrap()
+        });
+        thread::sleep(Duration::from_millis(20));
+        let cfg = NodeConfig::new("node-pub", NodePose::new(1.0, 2.0, 1.0, 90.0));
+        let obs = observation_from_devices(&cfg, &demo_devices(), Instant::now());
+        publish_observation(&addr.to_string(), &obs).unwrap();
+        let got = server.join().unwrap();
+        assert_eq!(got.node_id, "node-pub");
+        assert_eq!(got.device_observations.len(), 3);
     }
 }

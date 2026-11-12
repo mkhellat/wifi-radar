@@ -1,4 +1,4 @@
-//! wifi-radar-node — scan once and emit a NodeObservation batch.
+//! wifi-radar-node — scan once and emit or publish a NodeObservation batch.
 
 use std::env;
 use std::io::{self, Write};
@@ -8,20 +8,22 @@ use std::time::Instant;
 use wifi_radar_core::{NodePose, ScanBackend};
 use wifi_radar_linux::{IwCliBackend, Nl80211Backend};
 use wifi_radar_node::{
-    demo_devices, observation_from_devices, observation_to_ndjson, scan_once, NodeConfig,
+    demo_devices, observation_from_devices, observation_to_ndjson, publish_observation, scan_once,
+    NodeConfig,
 };
 
 fn usage() -> ! {
     eprintln!(
         "Usage: wifi-radar-node [options]\n\
          \n\
-           --node-id ID          Node identifier (default: hostname or 'node')\n\
+           --node-id ID          Node identifier (default: HOSTNAME or 'node')\n\
            --pose X,Y,Z,HEADING  Pose in shared frame (default: 0,0,1,0)\n\
            -i, --interface IFACE Wireless interface (default: wlan0)\n\
            --demo                Synthetic devices (no radio)\n\
-           --pretty              Pretty-print JSON instead of NDJSON\n\
+           --pretty              Pretty-print JSON instead of NDJSON (stdout)\n\
+           --publish HOST:PORT   Send NDJSON to a wifi-radar-fuse --listen peer\n\
          \n\
-         Scans once and writes one NodeObservation to stdout.\n\
+         Scans once; writes to stdout unless --publish is set.\n\
          Passive observation only — not survey-grade localization."
     );
     process::exit(2);
@@ -45,9 +47,7 @@ fn default_node_id() -> String {
 fn parse_pose(raw: &str) -> Result<NodePose, String> {
     let parts: Vec<_> = raw.split(',').map(str::trim).collect();
     if parts.len() != 4 {
-        return Err(format!(
-            "pose must be X,Y,Z,HEADING (got {raw})"
-        ));
+        return Err(format!("pose must be X,Y,Z,HEADING (got {raw})"));
     }
     let x: f64 = parts[0].parse().map_err(|_| "bad pose X")?;
     let y: f64 = parts[1].parse().map_err(|_| "bad pose Y")?;
@@ -67,6 +67,7 @@ fn run() -> Result<(), String> {
     let mut iface = "wlan0".to_string();
     let mut demo = false;
     let mut pretty = false;
+    let mut publish: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -85,10 +86,18 @@ fn run() -> Result<(), String> {
             }
             "--demo" => demo = true,
             "--pretty" => pretty = true,
+            "--publish" => {
+                i += 1;
+                publish = Some(args.get(i).ok_or("--publish needs HOST:PORT")?.clone());
+            }
             s if s.starts_with('-') => return Err(format!("unknown flag '{s}'")),
             s => return Err(format!("unexpected argument '{s}'")),
         }
         i += 1;
+    }
+
+    if pretty && publish.is_some() {
+        return Err("--pretty cannot be combined with --publish".into());
     }
 
     let cfg = NodeConfig::new(node_id, pose);
@@ -107,6 +116,16 @@ fn run() -> Result<(), String> {
             }
         }
     };
+
+    if let Some(addr) = publish {
+        publish_observation(&addr, &obs)?;
+        eprintln!(
+            "wifi-radar-node: published {} device(s) as {} to {addr}",
+            obs.device_observations.len(),
+            obs.node_id
+        );
+        return Ok(());
+    }
 
     let out = if pretty {
         obs.to_json_pretty()?
