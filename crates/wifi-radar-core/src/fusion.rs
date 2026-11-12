@@ -1,7 +1,7 @@
-//! Multi-node observation association helpers.
+//! Multi-node observation association and 2D fusion helpers.
 //!
-//! Passive best-effort RF localization input only — not survey-grade. Public
-//! docs must not claim finished triangulation or 3D product capability.
+//! Passive best-effort RF localization only — not survey-grade. Public docs
+//! must not claim finished triangulation or 3D product capability.
 
 use std::collections::BTreeMap;
 
@@ -132,6 +132,123 @@ pub fn range_m_from_observation(dev: &DeviceObservation) -> f64 {
     10f64.powf(exponent).clamp(0.1, 120.0)
 }
 
+/// Outcome of a 2D fusion attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FuseStatus {
+    /// Enough nodes to produce a position.
+    Ok,
+    /// Fewer than two distinct node poses.
+    InsufficientNodes,
+}
+
+/// Best-effort 2D fused position (weighted centroid).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FusedPosition2D {
+    /// Target MAC.
+    pub mac: String,
+    /// Estimated X (metres).
+    pub x: f64,
+    /// Estimated Y (metres).
+    pub y: f64,
+    /// Scalar confidence in \[0, 1\] (geometry- and count-aware).
+    pub confidence: f64,
+    /// Number of contributing nodes.
+    pub contributing_nodes: usize,
+    /// Solve status.
+    pub status: FuseStatus,
+}
+
+/// RSSI-weighted centroid in the XY plane.
+///
+/// Weight for node *i* is `1 / max(range_m, 0.5)^2` so stronger (closer)
+/// sightings pull harder. Needs ≥2 distinct node positions; otherwise
+/// returns [`FuseStatus::InsufficientNodes`] with NaN coordinates.
+pub fn weighted_centroid_2d(target: &AssociatedTarget) -> FusedPosition2D {
+    let mac = target.mac.clone();
+    if target.sightings.len() < 2 {
+        return FusedPosition2D {
+            mac,
+            x: f64::NAN,
+            y: f64::NAN,
+            confidence: 0.0,
+            contributing_nodes: target.sightings.len(),
+            status: FuseStatus::InsufficientNodes,
+        };
+    }
+
+    let mut used: Vec<&NodeSighting> = Vec::new();
+    for s in &target.sightings {
+        let dup = used.iter().any(|u| {
+            (u.node_pose.x - s.node_pose.x).abs() < 1e-6
+                && (u.node_pose.y - s.node_pose.y).abs() < 1e-6
+        });
+        if !dup {
+            used.push(s);
+        }
+    }
+    if used.len() < 2 {
+        return FusedPosition2D {
+            mac,
+            x: f64::NAN,
+            y: f64::NAN,
+            confidence: 0.0,
+            contributing_nodes: used.len(),
+            status: FuseStatus::InsufficientNodes,
+        };
+    }
+
+    let mut sum_w = 0.0;
+    let mut sum_x = 0.0;
+    let mut sum_y = 0.0;
+    for s in &used {
+        let r = range_m_from_observation(&s.device).max(0.5);
+        let w = 1.0 / (r * r);
+        sum_w += w;
+        sum_x += w * s.node_pose.x;
+        sum_y += w * s.node_pose.y;
+    }
+    let x = sum_x / sum_w;
+    let y = sum_y / sum_w;
+
+    let n = used.len();
+    let mut max_sep: f64 = 0.0;
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let dx = used[i].node_pose.x - used[j].node_pose.x;
+            let dy = used[i].node_pose.y - used[j].node_pose.y;
+            max_sep = max_sep.max((dx * dx + dy * dy).sqrt());
+        }
+    }
+    let count_term = match n {
+        2 => 0.45,
+        3 => 0.70,
+        _ => 0.85,
+    };
+    let geom_term = (max_sep / 3.0).clamp(0.15, 1.0);
+    let confidence = (count_term * geom_term).clamp(0.0, 1.0);
+
+    FusedPosition2D {
+        mac,
+        x,
+        y,
+        confidence,
+        contributing_nodes: n,
+        status: FuseStatus::Ok,
+    }
+}
+
+/// Associate then run weighted centroid for every target with a successful solve.
+pub fn fuse_weighted_centroids(
+    batches: &[NodeObservation],
+    window_sec: f64,
+) -> Vec<FusedPosition2D> {
+    associate_observations(batches, window_sec)
+        .iter()
+        .map(weighted_centroid_2d)
+        .filter(|p| p.status == FuseStatus::Ok)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +377,54 @@ mod tests {
             ..strong.clone()
         };
         assert!(range_m_from_observation(&strong) < range_m_from_observation(&weak));
+    }
+
+    #[test]
+    fn centroid_needs_two_nodes() {
+        let a = obs(
+            "a",
+            100.0,
+            0.0,
+            0.0,
+            "aa:bb:00:00:00:01",
+            DeviceKind::Hotspot,
+            -40.0,
+        );
+        let targets = associate_observations(&[a], DEFAULT_FUSION_WINDOW_SEC);
+        let fused = weighted_centroid_2d(&targets[0]);
+        assert_eq!(fused.status, FuseStatus::InsufficientNodes);
+        assert_eq!(fused.contributing_nodes, 1);
+    }
+
+    #[test]
+    fn centroid_pulls_toward_stronger_rssi_node() {
+        let a = obs(
+            "a",
+            100.0,
+            0.0,
+            0.0,
+            "aa:bb:00:00:00:01",
+            DeviceKind::Hotspot,
+            -35.0,
+        );
+        let b = obs(
+            "b",
+            100.0,
+            4.0,
+            0.0,
+            "aa:bb:00:00:00:01",
+            DeviceKind::Hotspot,
+            -70.0,
+        );
+        let fused = fuse_weighted_centroids(&[a, b], DEFAULT_FUSION_WINDOW_SEC);
+        assert_eq!(fused.len(), 1);
+        assert_eq!(fused[0].status, FuseStatus::Ok);
+        assert!(
+            fused[0].x < 2.0,
+            "expected pull toward a, got x={}",
+            fused[0].x
+        );
+        assert!(fused[0].x > 0.0);
+        assert!(fused[0].confidence > 0.0);
     }
 }
