@@ -10,6 +10,11 @@ cargo run -p wifi-radar-tui -- --demo
 
 # Live scan: prefer nl80211 GET_SCAN dump, fall back to iw-cli
 cargo run -p wifi-radar-tui -- -i wlan0
+
+# Fused-track viewer (best-effort 2D — not survey-grade)
+cargo run -p wifi-radar-tui -- --fused --demo
+# Files:  cargo run -p wifi-radar-tui -- --fused tracks.ndjson
+# Pipe:   wifi-radar-fuse --listen 127.0.0.1:9800 | cargo run -p wifi-radar-tui -- --fused
 ```
 
 Keys: `h`/`l` heading (±5°), `H`/`L` fast (±15°), `j`/`k` select,
