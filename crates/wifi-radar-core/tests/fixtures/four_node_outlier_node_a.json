@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "timestamp_wall": 1700000400.0,
+  "timestamp_mono": 50.0,
+  "device_observations": [
+    {
+      "mac": "aa:aa:aa:00:00:40",
+      "kind": "hotspot",
+      "rssi_dbm": -40.48455006504028,
+      "channel": 6,
+      "freq_mhz": 2437,
+      "bearing_confidence": 0.0,
+      "label": "Outlier-AP",
+      "vendor": "TestOUI"
+    }
+  ],
+  "node_id": "node-a",
+  "node_pose": { "x": 0.0, "y": 0.0, "z": 1.0, "heading_deg": 0.0 }
+}
