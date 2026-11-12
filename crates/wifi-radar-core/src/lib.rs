@@ -8,6 +8,7 @@ pub mod bearing_calib;
 pub mod calibration;
 pub mod correction;
 pub mod models;
+pub mod node_obs;
 pub mod scan;
 pub mod store;
 pub mod util;
@@ -18,6 +19,9 @@ pub use correction::{apply_scene_corrections, AnchorDiagnostic, CorrectionSummar
 pub use models::{
     now_unix, placeholder_bearing_for_mac, DeviceKind, WifiDevice, PATH_LOSS_EXPONENT_INDOOR,
     RSSI_AT_1M_AP, RSSI_AT_1M_CLIENT,
+};
+pub use node_obs::{
+    DeviceObservation, NodeObservation, NodePose, NODE_OBS_SCHEMA_VERSION,
 };
 pub use scan::{ScanBackend, ScanError};
 pub use store::{DeviceStore, DEFAULT_TTL_SEC, RSSI_EMA_ALPHA};

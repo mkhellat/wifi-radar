@@ -2,6 +2,8 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+
 /// Indoor log-distance path-loss exponent.
 pub const PATH_LOSS_EXPONENT_INDOOR: f64 = 3.0;
 /// Typical RSSI at 1 m for an access point.
@@ -10,7 +12,8 @@ pub const RSSI_AT_1M_AP: f64 = -30.0;
 pub const RSSI_AT_1M_CLIENT: f64 = -35.0;
 
 /// Classification of an observed WiFi device.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DeviceKind {
     /// Broadcasting access point / hotspot.
     Hotspot,
