@@ -19,7 +19,8 @@ pub use bearing_calib::{BearingCalibrator, MIN_RSSI_SPREAD_DB, MIN_SAMPLES};
 pub use calibration::{CalibrationMode, CalibrationStore};
 pub use correction::{apply_scene_corrections, AnchorDiagnostic, CorrectionSummary};
 pub use fusion::{
-    associate_observations, range_m_from_observation, AssociatedTarget, NodeSighting,
+    associate_observations, fuse_weighted_centroids, range_m_from_observation,
+    weighted_centroid_2d, AssociatedTarget, FuseStatus, FusedPosition2D, NodeSighting,
     DEFAULT_FUSION_WINDOW_SEC,
 };
 pub use models::{
