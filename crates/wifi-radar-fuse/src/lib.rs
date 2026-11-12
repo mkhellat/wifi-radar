@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wifi_radar_core::{
     fuse_hybrid_bearing_range_2d, fuse_multilateration_2d, fuse_multilateration_2d_robust,
     fuse_weighted_centroids, read_observation, write_observation, FuseStatus, FusedPosition2D,
@@ -49,7 +49,7 @@ impl SolverKind {
 }
 
 /// One fused track line for stdout / NDJSON.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FusedTrack {
     /// Target MAC.
     pub mac: String,
@@ -147,6 +147,32 @@ pub fn tracks_to_ndjson(tracks: &[FusedTrack]) -> Result<String, String> {
         let line = serde_json::to_string(t).map_err(|e| e.to_string())?;
         out.push_str(&line);
         out.push('\n');
+    }
+    Ok(out)
+}
+
+/// Parse one NDJSON track line (whitespace-trimmed; empty → error).
+pub fn parse_track_ndjson_line(line: &str) -> Result<FusedTrack, String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Err("empty track line".into());
+    }
+    serde_json::from_str(trimmed).map_err(|e| e.to_string())
+}
+
+/// Parse zero or more fused-track NDJSON lines from a blob.
+///
+/// Blank lines are skipped. Each non-empty line must be one [`FusedTrack`].
+pub fn parse_tracks_ndjson(text: &str) -> Result<Vec<FusedTrack>, String> {
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        out.push(
+            parse_track_ndjson_line(line)
+                .map_err(|e| format!("line {}: {e}", i + 1))?,
+        );
     }
     Ok(out)
 }
@@ -349,6 +375,37 @@ mod tests {
     fn solver_kind_parse() {
         assert_eq!(SolverKind::parse("mlat").unwrap(), SolverKind::Multilateration);
         assert!(SolverKind::parse("nope").is_err());
+    }
+
+    #[test]
+    fn fused_track_ndjson_roundtrips() {
+        let paths = [
+            fixture("three_node_lab_node_a.json"),
+            fixture("three_node_lab_node_b.json"),
+            fixture("three_node_lab_node_c.json"),
+        ];
+        let refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+        let batches = load_observation_files(&refs).unwrap();
+        let tracks = fuse_batches(&batches, DEFAULT_FUSION_WINDOW_SEC, SolverKind::Multilateration);
+        let blob = tracks_to_ndjson(&tracks).unwrap();
+        let back = parse_tracks_ndjson(&blob).unwrap();
+        assert_eq!(back.len(), tracks.len());
+        assert_eq!(back[0].mac, tracks[0].mac);
+        assert_eq!(back[0].solver, tracks[0].solver);
+        assert_eq!(back[0].status, tracks[0].status);
+        assert_eq!(back[0].contributing_nodes, tracks[0].contributing_nodes);
+        assert!((back[0].x - tracks[0].x).abs() < 1e-9);
+        assert!((back[0].y - tracks[0].y).abs() < 1e-9);
+        assert!((back[0].x - 2.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn parse_tracks_ndjson_skips_blank_lines() {
+        let line = r#"{"mac":"aa:bb:cc:00:00:01","x":1.0,"y":2.0,"confidence":0.5,"residual_rms_m":0.1,"contributing_nodes":3,"solver":"mlat","status":"ok"}"#;
+        let blob = format!("\n{line}\n\n{line}\n");
+        let tracks = parse_tracks_ndjson(&blob).unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0].mac, "aa:bb:cc:00:00:01");
     }
 
     #[test]
