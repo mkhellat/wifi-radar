@@ -331,6 +331,128 @@ pub fn multilateration_2d(target: &AssociatedTarget) -> FusedPosition2D {
     }
 }
 
+/// Minimum `bearing_confidence` required to include a bearing residual.
+pub const MIN_BEARING_CONFIDENCE: f64 = 0.05;
+
+fn wrap_pi(a: f64) -> f64 {
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let mut x = (a + std::f64::consts::PI) % two_pi;
+    if x < 0.0 {
+        x += two_pi;
+    }
+    x - std::f64::consts::PI
+}
+
+/// Absolute bearing in the shared frame: degrees, 0 along +X, increasing CCW
+/// ([`f64::atan2`] convention).
+pub fn bearing_deg_from_delta(dx: f64, dy: f64) -> f64 {
+    dy.atan2(dx).to_degrees().rem_euclid(360.0)
+}
+
+fn bearing_residual_m(s: &NodeSighting, x: f64, y: f64) -> Option<(f64, f64, f64)> {
+    let conf = s.device.bearing_confidence;
+    let Some(bearing_deg) = s.device.bearing_deg else {
+        return None;
+    };
+    if conf < MIN_BEARING_CONFIDENCE {
+        return None;
+    }
+    let dx = x - s.node_pose.x;
+    let dy = y - s.node_pose.y;
+    let d2 = dx * dx + dy * dy;
+    if d2 < 1e-12 {
+        return None;
+    }
+    let d = d2.sqrt();
+    let pred = dy.atan2(dx);
+    let obs = bearing_deg.to_radians();
+    let ang = wrap_pi(pred - obs);
+    // Arc-length residual (metres), scaled by confidence.
+    let e = ang * d * conf;
+    // ∂e/∂x, ∂e/∂y via ∂atan2/∂(dx,dy) * d * conf (+ ang * ∂d term neglected for small steps).
+    let jx = (-dy / d2) * d * conf;
+    let jy = (dx / d2) * d * conf;
+    Some((e, jx, jy))
+}
+
+/// Hybrid bearing + RSSI 2D solve (Gauss-Newton).
+///
+/// Minimizes range residuals plus arc-length bearing residuals when
+/// `bearing_deg` is set and `bearing_confidence` ≥ [`MIN_BEARING_CONFIDENCE`].
+/// Seeded by [`multilateration_2d`]. Bearings are absolute in the shared frame
+/// (0° = +X, CCW). Best-effort 2D only — not survey-grade.
+pub fn hybrid_bearing_range_2d(target: &AssociatedTarget) -> FusedPosition2D {
+    let seed = multilateration_2d(target);
+    if seed.status != FuseStatus::Ok {
+        return seed;
+    }
+    let used = distinct_sightings(target);
+    let mut x = seed.x;
+    let mut y = seed.y;
+    let mut bearing_used = 0usize;
+
+    for _ in 0..MLAT_MAX_ITERS {
+        let mut jtj00 = 0.0;
+        let mut jtj01 = 0.0;
+        let mut jtj11 = 0.0;
+        let mut jte0 = 0.0;
+        let mut jte1 = 0.0;
+        bearing_used = 0;
+
+        for s in &used {
+            let r = range_m_from_observation(&s.device);
+            let dx = x - s.node_pose.x;
+            let dy = y - s.node_pose.y;
+            let d = (dx * dx + dy * dy).sqrt().max(1e-6);
+            let e = d - r;
+            let jx = dx / d;
+            let jy = dy / d;
+            jtj00 += jx * jx;
+            jtj01 += jx * jy;
+            jtj11 += jy * jy;
+            jte0 += jx * (-e);
+            jte1 += jy * (-e);
+
+            if let Some((eb, bjx, bjy)) = bearing_residual_m(s, x, y) {
+                bearing_used += 1;
+                jtj00 += bjx * bjx;
+                jtj01 += bjx * bjy;
+                jtj11 += bjy * bjy;
+                jte0 += bjx * (-eb);
+                jte1 += bjy * (-eb);
+            }
+        }
+
+        let det = jtj00 * jtj11 - jtj01 * jtj01;
+        if det.abs() < 1e-12 {
+            break;
+        }
+        let step_x = (jtj11 * jte0 - jtj01 * jte1) / det;
+        let step_y = (jtj00 * jte1 - jtj01 * jte0) / det;
+        x += step_x;
+        y += step_y;
+        if (step_x * step_x + step_y * step_y).sqrt() < MLAT_TOL {
+            break;
+        }
+    }
+
+    let rms = residual_rms(&used, x, y);
+    let resid_term = (1.0 / (1.0 + rms / 2.0)).clamp(0.05, 1.0);
+    let bearing_term = if bearing_used > 0 { 1.15 } else { 1.0 };
+    let confidence =
+        (geometry_confidence(&used) * resid_term * bearing_term).clamp(0.0, 1.0);
+
+    FusedPosition2D {
+        mac: target.mac.clone(),
+        x,
+        y,
+        confidence,
+        residual_rms_m: rms,
+        contributing_nodes: used.len(),
+        status: FuseStatus::Ok,
+    }
+}
+
 /// Associate then run weighted centroid for every target with a successful solve.
 pub fn fuse_weighted_centroids(
     batches: &[NodeObservation],
@@ -351,6 +473,18 @@ pub fn fuse_multilateration_2d(
     associate_observations(batches, window_sec)
         .iter()
         .map(multilateration_2d)
+        .filter(|p| p.status == FuseStatus::Ok)
+        .collect()
+}
+
+/// Associate then run hybrid bearing+RSSI fusion for every successful solve.
+pub fn fuse_hybrid_bearing_range_2d(
+    batches: &[NodeObservation],
+    window_sec: f64,
+) -> Vec<FusedPosition2D> {
+    associate_observations(batches, window_sec)
+        .iter()
+        .map(hybrid_bearing_range_2d)
         .filter(|p| p.status == FuseStatus::Ok)
         .collect()
 }
@@ -593,5 +727,96 @@ mod tests {
         let targets = associate_observations(&[a], DEFAULT_FUSION_WINDOW_SEC);
         let fused = multilateration_2d(&targets[0]);
         assert_eq!(fused.status, FuseStatus::InsufficientNodes);
+    }
+
+    fn obs_with_bearing(
+        node_id: &str,
+        t: f64,
+        nx: f64,
+        ny: f64,
+        mac: &str,
+        rssi: f64,
+        bearing_deg: f64,
+        bearing_confidence: f64,
+    ) -> NodeObservation {
+        let mut o = obs(node_id, t, nx, ny, mac, DeviceKind::Hotspot, rssi);
+        o.device_observations[0].bearing_deg = Some(bearing_deg);
+        o.device_observations[0].bearing_confidence = bearing_confidence;
+        o
+    }
+
+    #[test]
+    fn hybrid_lifts_two_node_solve_off_baseline_with_bearings() {
+        // Target (2, 1); two nodes on x-axis. Pure mlat stays on y≈0; bearings lift it.
+        let tx = 2.0_f64;
+        let ty = 1.0_f64;
+        let nodes = [("a", 0.0, 0.0), ("b", 4.0, 0.0)];
+        let batches: Vec<_> = nodes
+            .iter()
+            .map(|(id, nx, ny)| {
+                let d = (tx - nx).hypot(ty - ny);
+                obs_with_bearing(
+                    id,
+                    100.0,
+                    *nx,
+                    *ny,
+                    "aa:bb:00:00:00:01",
+                    rssi_for_hotspot_range(d),
+                    bearing_deg_from_delta(tx - nx, ty - ny),
+                    0.9,
+                )
+            })
+            .collect();
+
+        let mlat = fuse_multilateration_2d(&batches, DEFAULT_FUSION_WINDOW_SEC);
+        assert_eq!(mlat.len(), 1);
+        assert!(
+            mlat[0].y.abs() < 0.2,
+            "mlat should stay near baseline, y={}",
+            mlat[0].y
+        );
+
+        let hybrid = fuse_hybrid_bearing_range_2d(&batches, DEFAULT_FUSION_WINDOW_SEC);
+        assert_eq!(hybrid.len(), 1);
+        assert_eq!(hybrid[0].status, FuseStatus::Ok);
+        assert!(
+            (hybrid[0].x - tx).abs() < 0.15 && (hybrid[0].y - ty).abs() < 0.15,
+            "got ({}, {})",
+            hybrid[0].x,
+            hybrid[0].y
+        );
+        assert!(hybrid[0].y > 0.5, "bearings should pull off baseline");
+    }
+
+    #[test]
+    fn hybrid_without_bearings_matches_multilateration() {
+        let tx = 2.0_f64;
+        let ty = 1.0_f64;
+        let nodes = [
+            ("a", 0.0, 0.0),
+            ("b", 4.0, 0.0),
+            ("c", 2.0, 3.0),
+        ];
+        let batches: Vec<_> = nodes
+            .iter()
+            .map(|(id, nx, ny)| {
+                let d = (tx - nx).hypot(ty - ny);
+                obs(
+                    id,
+                    100.0,
+                    *nx,
+                    *ny,
+                    "aa:bb:00:00:00:01",
+                    DeviceKind::Hotspot,
+                    rssi_for_hotspot_range(d),
+                )
+            })
+            .collect();
+        let mlat = fuse_multilateration_2d(&batches, DEFAULT_FUSION_WINDOW_SEC);
+        let hybrid = fuse_hybrid_bearing_range_2d(&batches, DEFAULT_FUSION_WINDOW_SEC);
+        assert_eq!(mlat.len(), 1);
+        assert_eq!(hybrid.len(), 1);
+        assert!((mlat[0].x - hybrid[0].x).abs() < 1e-6);
+        assert!((mlat[0].y - hybrid[0].y).abs() < 1e-6);
     }
 }
