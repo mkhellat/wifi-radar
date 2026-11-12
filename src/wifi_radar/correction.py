@@ -7,8 +7,6 @@ from statistics import median
 
 from wifi_radar.calib_bridge import NativeCalibrationStore
 from wifi_radar.calibration import CalibrationMode, CalibrationStore
-
-CalibrationBackend = CalibrationStore | NativeCalibrationStore
 from wifi_radar.models import (
     PATH_LOSS_EXPONENT_INDOOR,
     RSSI_AT_1M_AP,
@@ -16,6 +14,8 @@ from wifi_radar.models import (
     DeviceKind,
     WifiDevice,
 )
+
+CalibrationBackend = CalibrationStore | NativeCalibrationStore
 
 
 @dataclass
