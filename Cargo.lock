@@ -818,6 +818,7 @@ dependencies = [
  "crossterm",
  "ratatui",
  "wifi-radar-core",
+ "wifi-radar-fuse",
  "wifi-radar-linux",
 ]
 

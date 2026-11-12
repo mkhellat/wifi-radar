@@ -43,7 +43,13 @@ impl Default for ScaleState {
 impl ScaleState {
     /// Choose ring definitions and scale max from device distances.
     pub fn pick(&mut self, devices: &[WifiDevice]) -> (Vec<(f64, String)>, f64) {
-        if devices.is_empty() {
+        let ranges: Vec<f64> = devices.iter().map(|d| d.distance_m()).collect();
+        self.pick_ranges(&ranges)
+    }
+
+    /// Choose ring definitions from raw range samples (metres).
+    pub fn pick_ranges(&mut self, ranges: &[f64]) -> (Vec<(f64, String)>, f64) {
+        if ranges.is_empty() {
             let threshold = self.last_max_m.unwrap_or(30.0);
             for &(t, rings) in SCALE_PRESETS {
                 if (t - threshold).abs() < f64::EPSILON
@@ -62,10 +68,7 @@ impl ScaleState {
             );
         }
 
-        let max_dist = devices
-            .iter()
-            .map(|d| d.distance_m())
-            .fold(0.0_f64, f64::max);
+        let max_dist = ranges.iter().copied().fold(0.0_f64, f64::max);
 
         let mut chosen = SCALE_PRESETS[SCALE_PRESETS.len() - 1].0;
         let mut rings = SCALE_PRESETS[SCALE_PRESETS.len() - 1].1;
@@ -78,7 +81,9 @@ impl ScaleState {
         }
 
         if let Some(last) = self.last_max_m {
-            if (chosen - last).abs() > f64::EPSILON {
+            if (chosen - last).abs() < f64::EPSILON {
+                self.last_max_m = Some(chosen);
+            } else {
                 let zoom_out = max_dist > last * 1.25 && chosen > last;
                 let zoom_in = max_dist < last * 0.45 && chosen < last;
                 if zoom_out || zoom_in {
@@ -96,8 +101,6 @@ impl ScaleState {
                         }
                     }
                 }
-            } else {
-                self.last_max_m = Some(chosen);
             }
         } else {
             self.last_max_m = Some(chosen);
@@ -108,6 +111,13 @@ impl ScaleState {
             self.last_max_m.unwrap_or(chosen),
         )
     }
+}
+
+/// Local frame (`x` east, `y` north) → range (m) and world bearing (deg, 0 = +Y).
+pub fn xy_to_range_bearing(x: f64, y: f64) -> (f64, f64) {
+    let range = (x * x + y * y).sqrt();
+    let bearing = x.atan2(y).to_degrees().rem_euclid(360.0);
+    (range, bearing)
 }
 
 /// Map estimated metres to polar radius (centre = you, edge = `scale_max_m`).
@@ -237,6 +247,112 @@ pub fn paint_polar(
     }
 }
 
+/// Paint polar rings and fused 2D tracks (`x`/`y` metres in the shared frame).
+pub fn paint_fused_tracks(
+    buf: &mut ratatui::buffer::Buffer,
+    area: ratatui::layout::Rect,
+    tracks: &[wifi_radar_fuse::FusedTrack],
+    heading_deg: f64,
+    selected_mac: Option<&str>,
+    scale: &mut ScaleState,
+) {
+    use ratatui::style::{Color, Modifier, Style};
+
+    if area.width < 20 || area.height < 8 {
+        buf.set_string(
+            area.x,
+            area.y,
+            "polar: area too small",
+            Style::default().fg(Color::DarkGray),
+        );
+        return;
+    }
+
+    let cx = area.x + area.width / 2;
+    let cy = area.y + area.height / 2;
+    let max_r = {
+        let by_x = (area.width / 2).saturating_sub(4) as f64;
+        let by_y = ((area.height / 2).saturating_sub(1) as f64) / ASPECT;
+        by_x.min(by_y).max(4.0).min(28.0)
+    };
+
+    let dim = Style::default().fg(Color::DarkGray);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+
+    let max_ri = max_r as i32;
+    for i in -max_ri..=max_ri {
+        let x = (cx as i32 + i) as u16;
+        if in_area(area, x, cy) {
+            buf.set_string(x, cy, "─", dim);
+        }
+        let y = (cy as f64 + f64::from(i) * ASPECT).round() as u16;
+        if in_area(area, cx, y) {
+            buf.set_string(cx, y, "│", dim);
+        }
+    }
+    if in_area(area, cx, cy) {
+        buf.set_string(cx, cy, "┼", dim);
+    }
+
+    let ranges: Vec<f64> = tracks
+        .iter()
+        .map(|t| xy_to_range_bearing(t.x, t.y).0)
+        .collect();
+    let (ring_defs, scale_max_m) = scale.pick_ranges(&ranges);
+    for (frac, label) in &ring_defs {
+        let ring = max_r * frac;
+        for deg in (0..360).step_by(2) {
+            let (x, y) = polar_to_cell(cx, cy, f64::from(deg), ring);
+            if in_area(area, x, y) {
+                buf.set_string(x, y, "∙", dim);
+            }
+        }
+        let (lx, ly) = polar_to_cell(cx, cy, 45.0, ring);
+        if in_area(area, lx.saturating_add(1), ly) {
+            buf.set_string(lx.saturating_add(1), ly, label, dim);
+        }
+    }
+
+    for (deg, lbl) in [(0.0, "N"), (90.0, "E"), (180.0, "S"), (270.0, "W")] {
+        let rel = (deg - heading_deg).rem_euclid(360.0);
+        let (x, y) = polar_to_cell(cx, cy, rel, max_r + 2.0);
+        if in_area(area, x, y) {
+            buf.set_string(x, y, lbl, bold);
+        }
+    }
+
+    for step in 1..=(max_r as i32) {
+        let t = f64::from(step) / max_r;
+        let (x, y) = polar_to_cell(cx, cy, 0.0, max_r * t);
+        if in_area(area, x, y) {
+            let ch = if step == max_r as i32 { "▲" } else { "│" };
+            buf.set_string(
+                x,
+                y,
+                ch,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            );
+        }
+    }
+
+    for t in tracks.iter().take(40) {
+        let (range_m, world_bearing) = xy_to_range_bearing(t.x, t.y);
+        let bearing = (world_bearing - heading_deg).rem_euclid(360.0);
+        let dist = distance_to_radius(range_m, scale_max_m, max_r);
+        let (x, y) = polar_to_cell(cx, cy, bearing, dist);
+        if !in_area(area, x, y) {
+            continue;
+        }
+        let mut style = Style::default().fg(Color::Magenta);
+        if selected_mac == Some(t.mac.as_str()) {
+            style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
+        }
+        buf.set_string(x, y, "◆", style);
+    }
+}
+
 fn in_area(area: ratatui::layout::Rect, x: u16, y: u16) -> bool {
     x > area.x
         && y > area.y
@@ -261,6 +377,16 @@ mod tests {
         let (x, y) = polar_to_cell(40, 20, 0.0, 10.0);
         assert_eq!(x, 40);
         assert!(y < 20, "forward/up should decrease row, got y={y}");
+    }
+
+    #[test]
+    fn xy_to_range_bearing_cardinals() {
+        let (r, b) = xy_to_range_bearing(0.0, 5.0);
+        assert!((r - 5.0).abs() < 1e-9);
+        assert!((b - 0.0).abs() < 1e-9, "north bearing={b}");
+        let (r, b) = xy_to_range_bearing(3.0, 0.0);
+        assert!((r - 3.0).abs() < 1e-9);
+        assert!((b - 90.0).abs() < 1e-9, "east bearing={b}");
     }
 
     #[test]
