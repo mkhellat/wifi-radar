@@ -1,11 +1,13 @@
 //! Native nl80211 scan backend (genetlink TRIGGER_SCAN + GET_SCAN dump).
 //!
-//! Passive observation only — no injection / deauth. `TRIGGER_SCAN` requests a
-//! fresh kernel scan; on failure (permissions, busy iface) the backend still
-//! falls back to dumping the existing scan cache.
+//! Passive observation only — no injection / deauth. After a successful
+//! `TRIGGER_SCAN`, the backend prefers waiting for multicast
+//! `NEW_SCAN_RESULTS` / `SCAN_ABORTED` on the `nl80211` `scan` group, with a
+//! timed sleep fallback if multicast join fails or no event arrives.
 
 use std::fs;
 use std::iter::once;
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -16,7 +18,7 @@ use neli::consts::socket::NlFamily;
 use neli::genl::{AttrTypeBuilder, Genlmsghdr, GenlmsghdrBuilder, NlattrBuilder, NoUserHeader};
 use neli::nl::NlPayload;
 use neli::neli_enum;
-use neli::router::synchronous::NlRouter;
+use neli::router::synchronous::{NlRouter, NlRouterReceiverHandle};
 use neli::types::GenlBuffer;
 use neli::utils::Groups;
 use wifi_radar_core::{ScanBackend, ScanError, WifiDevice};
@@ -25,8 +27,22 @@ use crate::bss::{device_from_bss_attrs, parse_nla_stream};
 
 pub use crate::bss::{devices_from_nl80211_attrs, encode_nla, RawAttr};
 
-/// Default wait after a successful `TRIGGER_SCAN` before dumping results.
+/// Default max wait after `TRIGGER_SCAN` before dumping results.
 pub const DEFAULT_TRIGGER_WAIT: Duration = Duration::from_millis(2500);
+
+/// How the backend waited (or did not wait) after the last trigger attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScanWaitKind {
+    /// No successful trigger on the last scan.
+    #[default]
+    None,
+    /// Received `NEW_SCAN_RESULTS` or `SCAN_ABORTED` on the scan multicast group.
+    MulticastEvent,
+    /// Joined the scan group but hit the wait timeout.
+    TimedOut,
+    /// Could not join multicast; used a fixed sleep instead.
+    SleepFallback,
+}
 
 /// Minimal nl80211 attribute types needed for TRIGGER_SCAN / GET_SCAN.
 #[neli_enum(serialized_type = "u16")]
@@ -44,10 +60,12 @@ impl neli::consts::genl::NlAttrType for Nl80211Attr {}
 /// Native nl80211 backend using genetlink TRIGGER_SCAN + GET_SCAN dump.
 pub struct Nl80211Backend {
     iface: String,
-    /// Sleep after a successful trigger before dumping the cache.
+    /// Max wait after a successful trigger before dumping the cache.
     trigger_wait: Duration,
     /// Last scan used a successful trigger (vs dump-only fallback).
     last_triggered: bool,
+    /// How the last successful trigger waited for results.
+    last_wait: ScanWaitKind,
 }
 
 impl Nl80211Backend {
@@ -57,6 +75,7 @@ impl Nl80211Backend {
             iface: iface.into(),
             trigger_wait: DEFAULT_TRIGGER_WAIT,
             last_triggered: false,
+            last_wait: ScanWaitKind::None,
         }
     }
 
@@ -70,7 +89,12 @@ impl Nl80211Backend {
         self.last_triggered
     }
 
-    /// Override the post-trigger wait (tests / tuning).
+    /// Wait strategy used after the most recent successful trigger.
+    pub fn last_wait(&self) -> ScanWaitKind {
+        self.last_wait
+    }
+
+    /// Override the post-trigger wait / timeout (tests / tuning).
     pub fn set_trigger_wait(&mut self, wait: Duration) {
         self.trigger_wait = wait;
     }
@@ -83,10 +107,11 @@ impl ScanBackend for Nl80211Backend {
 
     fn scan(&mut self) -> Result<Vec<WifiDevice>, ScanError> {
         self.last_triggered = false;
-        match trigger_scan(&self.iface) {
-            Ok(()) => {
+        self.last_wait = ScanWaitKind::None;
+        match trigger_scan_and_wait(&self.iface, self.trigger_wait) {
+            Ok(wait) => {
                 self.last_triggered = true;
-                thread::sleep(self.trigger_wait);
+                self.last_wait = wait;
             }
             Err(_) => {
                 // Cache dump still useful without CAP_NET_ADMIN / when busy.
@@ -104,7 +129,39 @@ pub fn trigger_scan(iface: &str) -> Result<(), ScanError> {
     let family_id = sock
         .resolve_genl_family("nl80211")
         .map_err(|e| ScanError::Message(format!("resolve nl80211 family: {e}")))?;
+    trigger_scan_on(&sock, family_id, ifindex)
+}
 
+/// Trigger a scan and wait for multicast results (or sleep / timeout fallback).
+pub fn trigger_scan_and_wait(iface: &str, timeout: Duration) -> Result<ScanWaitKind, ScanError> {
+    let ifindex = read_ifindex(iface)?;
+    let (sock, mc_recv) = NlRouter::connect(NlFamily::Generic, Some(0), Groups::empty())
+        .map_err(|e| ScanError::Message(format!("nl80211 socket: {e}")))?;
+    let family_id = sock
+        .resolve_genl_family("nl80211")
+        .map_err(|e| ScanError::Message(format!("resolve nl80211 family: {e}")))?;
+
+    let joined = join_scan_multicast(&sock);
+    trigger_scan_on(&sock, family_id, ifindex)?;
+
+    if !joined {
+        if !timeout.is_zero() {
+            thread::sleep(timeout);
+        }
+        return Ok(ScanWaitKind::SleepFallback);
+    }
+
+    Ok(wait_for_scan_multicast(mc_recv, timeout))
+}
+
+fn join_scan_multicast(sock: &NlRouter) -> bool {
+    let Ok(id) = sock.resolve_nl_mcast_group("nl80211", "scan") else {
+        return false;
+    };
+    sock.add_mcast_membership(Groups::new_groups(&[id])).is_ok()
+}
+
+fn trigger_scan_on(sock: &NlRouter, family_id: u16, ifindex: u32) -> Result<(), ScanError> {
     let attrs = once(
         NlattrBuilder::default()
             .nla_type(
@@ -147,6 +204,36 @@ pub fn trigger_scan(iface: &str) -> Result<(), ScanError> {
         }
     }
     Ok(())
+}
+
+fn wait_for_scan_multicast(
+    mc_recv: NlRouterReceiverHandle<u16, Genlmsghdr<u8, u16>>,
+    timeout: Duration,
+) -> ScanWaitKind {
+    let done = u8::from(Nl80211Command::NewScanResults);
+    let aborted = u8::from(Nl80211Command::ScanAborted);
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        for item in mc_recv {
+            let Ok(msg) = item else {
+                continue;
+            };
+            let NlPayload::Payload(genl) = msg.nl_payload() else {
+                continue;
+            };
+            let cmd = *genl.cmd();
+            if cmd == done || cmd == aborted {
+                let _ = tx.send(ScanWaitKind::MulticastEvent);
+                return;
+            }
+        }
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(kind) => kind,
+        Err(mpsc::RecvTimeoutError::Timeout) => ScanWaitKind::TimedOut,
+        Err(mpsc::RecvTimeoutError::Disconnected) => ScanWaitKind::TimedOut,
+    }
 }
 
 /// Dump cached scan results for `iface` via nl80211 GET_SCAN.
@@ -235,6 +322,7 @@ mod tests {
         assert_eq!(b.name(), "nl80211");
         assert_eq!(b.iface(), "wlan0");
         assert!(!b.last_triggered());
+        assert_eq!(b.last_wait(), ScanWaitKind::None);
     }
 
     #[test]
@@ -265,14 +353,35 @@ mod tests {
     }
 
     #[test]
+    fn trigger_and_wait_missing_iface_errors() {
+        let err = trigger_scan_and_wait("wifi-radar-no-such-iface", Duration::from_millis(1))
+            .expect_err("missing iface must not succeed");
+        assert!(
+            err.to_string().contains("ifindex"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn scan_falls_back_when_trigger_impossible() {
         let mut b = Nl80211Backend::new("wifi-radar-no-such-iface");
         b.set_trigger_wait(Duration::from_millis(0));
         let err = b.scan().expect_err("missing iface must fail dump");
         assert!(!b.last_triggered());
+        assert_eq!(b.last_wait(), ScanWaitKind::None);
         assert!(
             err.to_string().contains("ifindex"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn resolves_nl80211_scan_multicast_group() {
+        let Ok((sock, _)) = NlRouter::connect(NlFamily::Generic, Some(0), Groups::empty()) else {
+            return;
+        };
+        // Presence of the group validates our join path; membership may still
+        // fail under restricted CI sandboxes.
+        let _ = sock.resolve_nl_mcast_group("nl80211", "scan");
     }
 }
