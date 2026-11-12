@@ -7,6 +7,7 @@
 pub mod bearing_calib;
 pub mod calibration;
 pub mod correction;
+pub mod fusion;
 pub mod models;
 pub mod node_obs;
 pub mod obs_transport;
@@ -17,6 +18,10 @@ pub mod util;
 pub use bearing_calib::{BearingCalibrator, MIN_RSSI_SPREAD_DB, MIN_SAMPLES};
 pub use calibration::{CalibrationMode, CalibrationStore};
 pub use correction::{apply_scene_corrections, AnchorDiagnostic, CorrectionSummary};
+pub use fusion::{
+    associate_observations, range_m_from_observation, AssociatedTarget, NodeSighting,
+    DEFAULT_FUSION_WINDOW_SEC,
+};
 pub use models::{
     now_unix, placeholder_bearing_for_mac, DeviceKind, WifiDevice, PATH_LOSS_EXPONENT_INDOOR,
     RSSI_AT_1M_AP, RSSI_AT_1M_CLIENT,
