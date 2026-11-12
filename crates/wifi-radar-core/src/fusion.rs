@@ -141,7 +141,7 @@ pub enum FuseStatus {
     InsufficientNodes,
 }
 
-/// Best-effort 2D fused position (weighted centroid).
+/// Best-effort 2D fused position.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FusedPosition2D {
     /// Target MAC.
@@ -150,32 +150,29 @@ pub struct FusedPosition2D {
     pub x: f64,
     /// Estimated Y (metres).
     pub y: f64,
-    /// Scalar confidence in \[0, 1\] (geometry- and count-aware).
+    /// Scalar confidence in \[0, 1\] (geometry-, count-, and residual-aware).
     pub confidence: f64,
+    /// RMS range residual in metres after the solve (0 for pure centroid).
+    pub residual_rms_m: f64,
     /// Number of contributing nodes.
     pub contributing_nodes: usize,
     /// Solve status.
     pub status: FuseStatus,
 }
 
-/// RSSI-weighted centroid in the XY plane.
-///
-/// Weight for node *i* is `1 / max(range_m, 0.5)^2` so stronger (closer)
-/// sightings pull harder. Needs ≥2 distinct node positions; otherwise
-/// returns [`FuseStatus::InsufficientNodes`] with NaN coordinates.
-pub fn weighted_centroid_2d(target: &AssociatedTarget) -> FusedPosition2D {
-    let mac = target.mac.clone();
-    if target.sightings.len() < 2 {
-        return FusedPosition2D {
-            mac,
-            x: f64::NAN,
-            y: f64::NAN,
-            confidence: 0.0,
-            contributing_nodes: target.sightings.len(),
-            status: FuseStatus::InsufficientNodes,
-        };
+fn insufficient(mac: String, n: usize) -> FusedPosition2D {
+    FusedPosition2D {
+        mac,
+        x: f64::NAN,
+        y: f64::NAN,
+        confidence: 0.0,
+        residual_rms_m: f64::NAN,
+        contributing_nodes: n,
+        status: FuseStatus::InsufficientNodes,
     }
+}
 
+fn distinct_sightings(target: &AssociatedTarget) -> Vec<&NodeSighting> {
     let mut used: Vec<&NodeSighting> = Vec::new();
     for s in &target.sightings {
         let dup = used.iter().any(|u| {
@@ -186,30 +183,10 @@ pub fn weighted_centroid_2d(target: &AssociatedTarget) -> FusedPosition2D {
             used.push(s);
         }
     }
-    if used.len() < 2 {
-        return FusedPosition2D {
-            mac,
-            x: f64::NAN,
-            y: f64::NAN,
-            confidence: 0.0,
-            contributing_nodes: used.len(),
-            status: FuseStatus::InsufficientNodes,
-        };
-    }
+    used
+}
 
-    let mut sum_w = 0.0;
-    let mut sum_x = 0.0;
-    let mut sum_y = 0.0;
-    for s in &used {
-        let r = range_m_from_observation(&s.device).max(0.5);
-        let w = 1.0 / (r * r);
-        sum_w += w;
-        sum_x += w * s.node_pose.x;
-        sum_y += w * s.node_pose.y;
-    }
-    let x = sum_x / sum_w;
-    let y = sum_y / sum_w;
-
+fn geometry_confidence(used: &[&NodeSighting]) -> f64 {
     let n = used.len();
     let mut max_sep: f64 = 0.0;
     for i in 0..n {
@@ -225,14 +202,131 @@ pub fn weighted_centroid_2d(target: &AssociatedTarget) -> FusedPosition2D {
         _ => 0.85,
     };
     let geom_term = (max_sep / 3.0).clamp(0.15, 1.0);
-    let confidence = (count_term * geom_term).clamp(0.0, 1.0);
+    (count_term * geom_term).clamp(0.0, 1.0)
+}
+
+fn residual_rms(used: &[&NodeSighting], x: f64, y: f64) -> f64 {
+    if used.is_empty() {
+        return f64::NAN;
+    }
+    let mut acc = 0.0;
+    for s in used {
+        let r = range_m_from_observation(&s.device);
+        let dx = x - s.node_pose.x;
+        let dy = y - s.node_pose.y;
+        let d = (dx * dx + dy * dy).sqrt();
+        let e = d - r;
+        acc += e * e;
+    }
+    (acc / used.len() as f64).sqrt()
+}
+
+/// RSSI-weighted centroid in the XY plane.
+///
+/// Weight for node *i* is `1 / max(range_m, 0.5)^2` so stronger (closer)
+/// sightings pull harder. Needs ≥2 distinct node positions; otherwise
+/// returns [`FuseStatus::InsufficientNodes`] with NaN coordinates.
+pub fn weighted_centroid_2d(target: &AssociatedTarget) -> FusedPosition2D {
+    let mac = target.mac.clone();
+    if target.sightings.len() < 2 {
+        return insufficient(mac, target.sightings.len());
+    }
+    let used = distinct_sightings(target);
+    if used.len() < 2 {
+        return insufficient(mac, used.len());
+    }
+
+    let mut sum_w = 0.0;
+    let mut sum_x = 0.0;
+    let mut sum_y = 0.0;
+    for s in &used {
+        let r = range_m_from_observation(&s.device).max(0.5);
+        let w = 1.0 / (r * r);
+        sum_w += w;
+        sum_x += w * s.node_pose.x;
+        sum_y += w * s.node_pose.y;
+    }
+    let x = sum_x / sum_w;
+    let y = sum_y / sum_w;
+    let n = used.len();
 
     FusedPosition2D {
         mac,
         x,
         y,
-        confidence,
+        confidence: geometry_confidence(&used),
+        residual_rms_m: residual_rms(&used, x, y),
         contributing_nodes: n,
+        status: FuseStatus::Ok,
+    }
+}
+
+/// Max Gauss-Newton iterations for RSSI multilateration.
+const MLAT_MAX_ITERS: usize = 25;
+/// Relative step size stop for multilateration.
+const MLAT_TOL: f64 = 1e-6;
+
+/// RSSI-only 2D multilateration (Gauss-Newton), seeded by the weighted centroid.
+///
+/// Minimizes `Σ (‖p − node_i‖ − r_i)²` with unit weights. With only two nodes
+/// the problem is underdetermined off the baseline; the seed keeps the solve
+/// on that line. Prefer ≥3 non-collinear nodes for a stable 2D fix.
+pub fn multilateration_2d(target: &AssociatedTarget) -> FusedPosition2D {
+    let seed = weighted_centroid_2d(target);
+    if seed.status != FuseStatus::Ok {
+        return seed;
+    }
+    let used = distinct_sightings(target);
+    let mut x = seed.x;
+    let mut y = seed.y;
+
+    for _ in 0..MLAT_MAX_ITERS {
+        // Normal equations JᵀJ δ = Jᵀ(-e) for 2 unknowns.
+        let mut jtj00 = 0.0;
+        let mut jtj01 = 0.0;
+        let mut jtj11 = 0.0;
+        let mut jte0 = 0.0;
+        let mut jte1 = 0.0;
+
+        for s in &used {
+            let r = range_m_from_observation(&s.device);
+            let dx = x - s.node_pose.x;
+            let dy = y - s.node_pose.y;
+            let d = (dx * dx + dy * dy).sqrt().max(1e-6);
+            let e = d - r;
+            let jx = dx / d;
+            let jy = dy / d;
+            jtj00 += jx * jx;
+            jtj01 += jx * jy;
+            jtj11 += jy * jy;
+            jte0 += jx * (-e);
+            jte1 += jy * (-e);
+        }
+
+        let det = jtj00 * jtj11 - jtj01 * jtj01;
+        if det.abs() < 1e-12 {
+            break;
+        }
+        let dx = (jtj11 * jte0 - jtj01 * jte1) / det;
+        let dy = (jtj00 * jte1 - jtj01 * jte0) / det;
+        x += dx;
+        y += dy;
+        if (dx * dx + dy * dy).sqrt() < MLAT_TOL {
+            break;
+        }
+    }
+
+    let rms = residual_rms(&used, x, y);
+    let resid_term = (1.0 / (1.0 + rms / 2.0)).clamp(0.05, 1.0);
+    let confidence = (geometry_confidence(&used) * resid_term).clamp(0.0, 1.0);
+
+    FusedPosition2D {
+        mac: target.mac.clone(),
+        x,
+        y,
+        confidence,
+        residual_rms_m: rms,
+        contributing_nodes: used.len(),
         status: FuseStatus::Ok,
     }
 }
@@ -245,6 +339,18 @@ pub fn fuse_weighted_centroids(
     associate_observations(batches, window_sec)
         .iter()
         .map(weighted_centroid_2d)
+        .filter(|p| p.status == FuseStatus::Ok)
+        .collect()
+}
+
+/// Associate then run RSSI multilateration for every target with a successful solve.
+pub fn fuse_multilateration_2d(
+    batches: &[NodeObservation],
+    window_sec: f64,
+) -> Vec<FusedPosition2D> {
+    associate_observations(batches, window_sec)
+        .iter()
+        .map(multilateration_2d)
         .filter(|p| p.status == FuseStatus::Ok)
         .collect()
 }
@@ -426,5 +532,66 @@ mod tests {
         );
         assert!(fused[0].x > 0.0);
         assert!(fused[0].confidence > 0.0);
+    }
+
+    /// Inverse of [`range_m_from_observation`] for hotspot @ 2437 MHz.
+    fn rssi_for_hotspot_range(d_m: f64) -> f64 {
+        let n = PATH_LOSS_EXPONENT_INDOOR;
+        DeviceKind::Hotspot.rssi_at_1m() - 10.0 * n * d_m.log10()
+    }
+
+    #[test]
+    fn multilateration_recovers_known_point_with_three_nodes() {
+        // Target at (2, 1); nodes at (0,0), (4,0), (2,3) with exact ranges.
+        let tx = 2.0_f64;
+        let ty = 1.0_f64;
+        let nodes = [
+            ("a", 0.0, 0.0),
+            ("b", 4.0, 0.0),
+            ("c", 2.0, 3.0),
+        ];
+        let batches: Vec<_> = nodes
+            .iter()
+            .map(|(id, nx, ny)| {
+                let d = ((tx - nx).hypot(ty - ny)).max(0.1);
+                obs(
+                    id,
+                    100.0,
+                    *nx,
+                    *ny,
+                    "aa:bb:00:00:00:01",
+                    DeviceKind::Hotspot,
+                    rssi_for_hotspot_range(d),
+                )
+            })
+            .collect();
+        let fused = fuse_multilateration_2d(&batches, DEFAULT_FUSION_WINDOW_SEC);
+        assert_eq!(fused.len(), 1);
+        assert_eq!(fused[0].status, FuseStatus::Ok);
+        assert!(
+            (fused[0].x - tx).abs() < 0.05 && (fused[0].y - ty).abs() < 0.05,
+            "got ({}, {}), residual={}",
+            fused[0].x,
+            fused[0].y,
+            fused[0].residual_rms_m
+        );
+        assert!(fused[0].residual_rms_m < 0.05);
+        assert_eq!(fused[0].contributing_nodes, 3);
+    }
+
+    #[test]
+    fn multilateration_needs_two_nodes() {
+        let a = obs(
+            "a",
+            100.0,
+            0.0,
+            0.0,
+            "aa:bb:00:00:00:01",
+            DeviceKind::Hotspot,
+            -40.0,
+        );
+        let targets = associate_observations(&[a], DEFAULT_FUSION_WINDOW_SEC);
+        let fused = multilateration_2d(&targets[0]);
+        assert_eq!(fused.status, FuseStatus::InsufficientNodes);
     }
 }
