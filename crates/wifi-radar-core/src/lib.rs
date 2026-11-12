@@ -9,6 +9,7 @@ pub mod calibration;
 pub mod correction;
 pub mod models;
 pub mod node_obs;
+pub mod obs_transport;
 pub mod scan;
 pub mod store;
 pub mod util;
@@ -23,6 +24,7 @@ pub use models::{
 pub use node_obs::{
     DeviceObservation, NodeObservation, NodePose, NODE_OBS_SCHEMA_VERSION,
 };
+pub use obs_transport::{read_observation, read_observation_tcp, write_observation};
 pub use scan::{ScanBackend, ScanError};
 pub use store::{DeviceStore, DEFAULT_TTL_SEC, RSSI_EMA_ALPHA};
 pub use util::normalize_mac;
