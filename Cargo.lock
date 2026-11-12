@@ -795,6 +795,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wifi-radar-node"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wifi-radar-core",
+ "wifi-radar-linux",
+]
+
+[[package]]
 name = "wifi-radar-py"
 version = "0.1.0"
 dependencies = [

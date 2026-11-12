@@ -6,6 +6,7 @@ members = [
     "crates/wifi-radar-tui",
     "crates/wifi-radar-py",
     "crates/wifi-radar-fuse",
+    "crates/wifi-radar-node",
 ]
 
 [workspace.package]

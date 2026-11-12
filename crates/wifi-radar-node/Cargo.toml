@@ -1,0 +1,17 @@
+[package]
+name = "wifi-radar-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sensing node agent: scan and publish NodeObservation batches"
+readme = "README.md"
+
+[[bin]]
+name = "wifi-radar-node"
+path = "src/main.rs"
+
+[dependencies]
+wifi-radar-core = { workspace = true }
+wifi-radar-linux = { workspace = true }
+serde_json = "1.0.154"
