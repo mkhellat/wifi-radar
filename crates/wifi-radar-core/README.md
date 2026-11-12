@@ -2,9 +2,10 @@
 
 Domain core for wifi-radar: device models, `DeviceStore` (EMA RSSI + TTL),
 `ScanBackend` trait, MAC/ranging helpers, `CalibrationStore` (JSON under
-`~/.cache/wifi_radar/calibration.json`, Python-compatible), and scene
-`correction` (`apply_scene_corrections`, honest/anchor modes). Multi-node
-sync lands later.
+`~/.cache/wifi_radar/calibration.json`, Python-compatible), scene
+`correction` (`apply_scene_corrections`, honest/anchor modes), and a
+JSON `NodeObservation` schema for future multi-node fusion (types only;
+no transport or solver yet).
 
 ```bash
 cargo test -p wifi-radar-core
