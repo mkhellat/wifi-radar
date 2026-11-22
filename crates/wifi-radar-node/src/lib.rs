@@ -73,6 +73,15 @@ pub fn publish_observation(addr: &str, obs: &NodeObservation) -> Result<(), Stri
     write_observation(&mut stream, obs)
 }
 
+/// Connect to a fuse `--listen-ws` peer and send one observation as a text frame.
+///
+/// `addr` is `HOST:PORT`. The frame is the same NDJSON line as
+/// [`publish_observation`]. The socket is plaintext `ws://` and is closed
+/// after the frame so the aggregator can finish the batch.
+pub fn publish_observation_ws(addr: &str, obs: &NodeObservation) -> Result<(), String> {
+    wifi_radar_core::write_observation_ws_client(addr, obs)
+}
+
 /// Settings for a repeated scan / publish loop.
 #[derive(Debug, Clone)]
 pub struct LoopConfig {
@@ -167,6 +176,30 @@ mod tests {
     }
 
     #[test]
+    fn publish_observation_ws_reaches_listener() {
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+        use wifi_radar_core::read_observations_from_ws_server;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            read_observations_from_ws_server(stream).unwrap()
+        });
+        thread::sleep(Duration::from_millis(20));
+        let cfg = NodeConfig::new("node-ws", NodePose::new(1.0, 2.0, 1.0, 90.0));
+        let obs = observation_from_devices(&cfg, &demo_devices(), Instant::now());
+        publish_observation_ws(&addr.to_string(), &obs).unwrap();
+        let got = server.join().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].node_id, "node-ws");
+        assert_eq!(got[0].device_observations.len(), 3);
+        assert!((got[0].node_pose.heading_deg - 90.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn observation_loop_runs_count_times() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
@@ -216,5 +249,38 @@ mod tests {
         let got = collected.lock().unwrap();
         assert_eq!(got.len(), 2);
         assert!(got.iter().all(|o| o.node_id == "node-loop"));
+    }
+
+    #[test]
+    fn observation_loop_publishes_ws_each_iteration() {
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use wifi_radar_core::read_observations_from_ws_server;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let collected: Arc<Mutex<Vec<NodeObservation>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_bg = Arc::clone(&collected);
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                let batch = read_observations_from_ws_server(stream).unwrap();
+                collected_bg.lock().unwrap().extend(batch);
+            }
+        });
+        thread::sleep(Duration::from_millis(20));
+        let cfg_node = NodeConfig::new("node-ws-loop", NodePose::new(0.0, 0.0, 1.0, 0.0));
+        let loop_cfg = LoopConfig::new(Duration::from_millis(10), Some(2));
+        let addr_s = addr.to_string();
+        let n = run_observation_loop(&loop_cfg, |_| {
+            let obs = observation_from_devices(&cfg_node, &demo_devices(), Instant::now());
+            publish_observation_ws(&addr_s, &obs)
+        })
+        .unwrap();
+        assert_eq!(n, 2);
+        server.join().unwrap();
+        let got = collected.lock().unwrap();
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|o| o.node_id == "node-ws-loop"));
     }
 }
