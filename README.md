@@ -91,7 +91,7 @@ wifi-radar --version
 | `k` / `↑` | Select previous device |
 | `g` / `G` | Jump to first / last device |
 | `r` | Force rescan |
-| `m` | Toggle monitor mode |
+| `m` | Toggle monitor mode (Python: background worker; Ratatui: passive airodump/tshark on the scan, root required) |
 | `c` | Start/stop bearing calibration |
 | `x` | Clear saved calibration for selected device |
 | `Esc` | Deselect |
@@ -120,8 +120,8 @@ interactive app until parity is reached.
 ```
 crates/
   wifi-radar-core/    Domain models, store, scan traits (Rust)
-  wifi-radar-linux/   nl80211 TRIGGER_SCAN + GET_SCAN dump, iw-cli fallback
-  wifi-radar-tui/     Ratatui polar + calib (`--demo` / `-i`; nl80211 then iw)
+  wifi-radar-linux/   nl80211 + iw-cli; passive {phy}mon (airodump, tshark)
+  wifi-radar-tui/     Ratatui polar (`--demo` / `-i`); `m` monitor when root
   wifi-radar-py/      PyO3 `wifi_radar_native` (store, calibration, scene)
 
 src/wifi_radar/       Current Python app (curses TUI, iw/airodump/tshark)

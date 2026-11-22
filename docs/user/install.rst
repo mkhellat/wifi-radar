@@ -88,13 +88,18 @@ Optional Rust front-ends
 The shipping interactive app is still ``wifi-radar`` (Python curses).
 During the hybrid migration you can also try:
 
-**Ratatui list MVP** (no root needed in demo mode). Live mode prefers
-nl80211 GET_SCAN dump and falls back to ``iw`` if genetlink fails:
+**Ratatui polar UI** (no root needed in demo mode). Live mode prefers
+nl80211 GET_SCAN dump and falls back to ``iw`` if genetlink fails.
+Press ``m`` (or ``:monitor``) as root for a passive ``airodump-ng``
+sample plus ``tshark`` probe requests when ``tshark`` is installed.
+Without root the scan stays on nl80211 / ``iw``. The sample does not
+inject, deauthenticate, or associate.
 
 .. code-block:: bash
 
    cargo run -p wifi-radar-tui -- --demo
    cargo run -p wifi-radar-tui -- -i wlan0
+   sudo cargo run -p wifi-radar-tui -- -i wlan0
 
 **PyO3 scripting module** (from ``crates/wifi-radar-py``):
 
