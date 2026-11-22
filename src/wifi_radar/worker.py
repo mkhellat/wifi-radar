@@ -12,12 +12,12 @@ import time
 from pathlib import Path
 
 from wifi_radar.iface import MonitorSession
-from wifi_radar.merge import DeviceStore
 from wifi_radar.models import WifiDevice
 from wifi_radar.oui import load_oui_map, vendor_for
 from wifi_radar.scan.airodump import parse_airodump_csv
 from wifi_radar.scan.iw import run_iw_scan
 from wifi_radar.scan.tshark import run_tshark_probes
+from wifi_radar.store_bridge import DeviceStoreBackend
 from wifi_radar.util import is_locally_administered
 
 SCAN_INTERVAL = 8.0
@@ -30,7 +30,7 @@ class ScanWorker:
     def __init__(
         self,
         iface: str,
-        store: DeviceStore,
+        store: DeviceStoreBackend,
         use_monitor: bool = True,
     ) -> None:
         self.iface = iface
