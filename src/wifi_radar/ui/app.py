@@ -8,8 +8,8 @@ from typing import cast
 
 from wifi_radar.calibration import CalibrationMode
 from wifi_radar.correction import apply_scene_corrections
-from wifi_radar.merge import DeviceStore
 from wifi_radar.models import WifiDevice
+from wifi_radar.store_bridge import DeviceStoreBackend, make_device_store
 from wifi_radar.ui.radar import draw_radar
 from wifi_radar.worker import ScanWorker
 
@@ -49,7 +49,7 @@ class BearingCalibrator:
                 (heading % 360.0, dev.rssi_dbm)
             )
 
-    def apply(self, store: DeviceStore) -> None:
+    def apply(self, store: DeviceStoreBackend) -> None:
         """Set bearing for devices with enough samples."""
         for mac, points in self._samples.items():
             if store.calibration.manual_bearing(mac) is not None:
@@ -60,11 +60,11 @@ class BearingCalibrator:
             if spread < 5.0:
                 continue  # omnidirectional / too close — bearing not observable
             best_bearing, _ = max(points, key=lambda p: p[1])
-            dev = store.devices.get(mac)
-            if dev is None:
+            if store.get(mac) is None:
                 continue
-            dev.bearing_deg = best_bearing
-            dev.bearing_confidence = min(1.0, spread / 20.0)
+            store.set_bearing(
+                mac, best_bearing, confidence=min(1.0, spread / 20.0), manual=False
+            )
 
 
 # vi-style commands executed from command mode
@@ -86,7 +86,7 @@ COMMANDS: dict[str, str] = {
 
 
 def _pin_bearing(
-    store: DeviceStore,
+    store: DeviceStoreBackend,
     worker: ScanWorker,
     mac: str,
     heading: float,
@@ -95,22 +95,19 @@ def _pin_bearing(
     """Pin world bearing for a device relative to current heading."""
     bearing = (heading + offset_deg) % 360.0
     store.calibration.set_manual_bearing(mac, bearing)
-    dev = store.devices.get(mac)
+    dev = store.get(mac)
     label = dev.label if dev else mac
-    if dev:
-        dev.bearing_deg = bearing
-        dev.bearing_manual = True
-        dev.bearing_confidence = 1.0
+    store.set_bearing(mac, bearing, confidence=1.0, manual=True)
     worker.status = f"Pinned {label} at {bearing:.0f}° (manual)"
 
 
 def _calibrate_distance(
-    store: DeviceStore,
+    store: DeviceStoreBackend,
     worker: ScanWorker,
     mac: str,
     distance_m: float,
 ) -> None:
-    dev = store.devices.get(mac)
+    dev = store.get(mac)
     if dev is None:
         return
     ref = store.calibration.set_distance_reference(mac, dev.rssi_dbm, distance_m)
@@ -121,18 +118,15 @@ def _calibrate_distance(
 
 
 def _clear_calibration(
-    store: DeviceStore,
+    store: DeviceStoreBackend,
     worker: ScanWorker,
     mac: str,
 ) -> None:
     """Release saved distance/bearing calibration for one MAC."""
-    dev = store.devices.get(mac)
+    dev = store.get(mac)
     label = dev.label if dev else mac
     store.calibration.clear(mac)
-    if dev is not None:
-        dev.bearing_deg = None
-        dev.bearing_manual = False
-        dev.bearing_confidence = 0.0
+    store.clear_bearing(mac)
     worker.status = f"Cleared calibration for {label}"
 
 
@@ -276,7 +270,7 @@ def _show_help(
 
 def run_app(iface: str, use_monitor: bool) -> int:
     """Main curses application. Returns exit code."""
-    store = DeviceStore()
+    store = make_device_store()
     worker = ScanWorker(iface, store, use_monitor=use_monitor)
     calibrator = BearingCalibrator()
     heading = 0.0
