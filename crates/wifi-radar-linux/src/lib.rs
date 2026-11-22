@@ -8,12 +8,15 @@
 pub mod airodump;
 pub mod bss;
 pub mod iw;
+pub mod monitor;
 pub mod nl80211;
+mod proc;
 pub mod tshark;
 
 pub use airodump::{parse_airodump_csv, parse_airodump_file};
 pub use bss::{device_from_bss_attrs, devices_from_nl80211_attrs, RawAttr};
 pub use iw::IwCliBackend;
+pub use monitor::{is_root, MonitorSession};
 pub use nl80211::{
     trigger_scan, trigger_scan_and_wait, Nl80211Backend, ScanWaitKind, DEFAULT_TRIGGER_WAIT,
 };
