@@ -9,6 +9,7 @@ pub mod airodump;
 pub mod bss;
 pub mod iw;
 pub mod nl80211;
+pub mod tshark;
 
 pub use airodump::{parse_airodump_csv, parse_airodump_file};
 pub use bss::{device_from_bss_attrs, devices_from_nl80211_attrs, RawAttr};
@@ -16,6 +17,7 @@ pub use iw::IwCliBackend;
 pub use nl80211::{
     trigger_scan, trigger_scan_and_wait, Nl80211Backend, ScanWaitKind, DEFAULT_TRIGGER_WAIT,
 };
+pub use tshark::parse_tshark_probes;
 
 use wifi_radar_core::VERSION as CORE_VERSION;
 
