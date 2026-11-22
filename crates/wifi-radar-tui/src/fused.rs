@@ -23,6 +23,52 @@ use crate::polar::{self, ScaleState};
 /// Idle silence after which buffered stdin lines become the active track set.
 pub const FUSED_EPOCH_IDLE_MS: u64 = 80;
 
+/// Header title. Confidence and residual are solver heuristics, not a
+/// survey-grade bound.
+pub const FUSED_HEADER_TITLE: &str =
+    "Best-effort 2D — conf/residual are solver heuristics, not survey-grade";
+
+/// Help overlay lines. The last line is the same caveat as the header.
+pub fn fused_help_lines() -> &'static [&'static str] {
+    &[
+        "Fused-track viewer",
+        "  q quit   h/l heading   j/k select   ? help",
+        "  Pipe: wifi-radar-fuse --listen … | wifi-radar-tui --fused",
+        "  Best-effort 2D only — not survey-grade localization.",
+        "  conf/residual are solver heuristics, not survey-grade.",
+    ]
+}
+
+/// Footer detail from the track fields that already exist.
+///
+/// Shape is `rms=…m conf=… nodes=…`. This does not recompute the solver.
+pub fn format_selected_track_detail(track: &FusedTrack) -> String {
+    format!(
+        "rms={:.2}m conf={:.2} nodes={}",
+        track.residual_rms_m, track.confidence, track.contributing_nodes
+    )
+}
+
+/// Status line, with the selected track's residual detail prefixed.
+///
+/// A missing or stale MAC leaves the status text alone.
+pub fn fused_footer_line(
+    status: &str,
+    tracks: &[FusedTrack],
+    selected_mac: Option<&str>,
+) -> String {
+    let detail = selected_mac.and_then(|mac| {
+        tracks
+            .iter()
+            .find(|t| t.mac == mac)
+            .map(format_selected_track_detail)
+    });
+    match detail {
+        Some(d) => format!("{d}  {status}"),
+        None => status.to_string(),
+    }
+}
+
 /// Mutable state for `--fused` polar viewer.
 pub struct FusedApp {
     /// Latest fused tracks (shared with stdin reader when piping).
@@ -234,12 +280,7 @@ pub fn spawn_stdin_track_reader(tracks: Arc<Mutex<Vec<FusedTrack>>>, status: Arc
 /// Draw fused-track UI (header, polar, table, footer).
 pub fn draw(frame: &mut Frame, app: &mut FusedApp) {
     if app.help_overlay {
-        let text = vec![
-            Line::from("Fused-track viewer"),
-            Line::from("  q quit   h/l heading   j/k select   ? help"),
-            Line::from("  Pipe: wifi-radar-fuse --listen … | wifi-radar-tui --fused"),
-            Line::from("  Best-effort 2D only — not survey-grade localization."),
-        ];
+        let text: Vec<Line> = fused_help_lines().iter().copied().map(Line::from).collect();
         frame.render_widget(
             Paragraph::new(text).block(
                 Block::default()
@@ -286,7 +327,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &FusedApp) {
         Paragraph::new(title).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Best-effort 2D fused tracks — not survey-grade"),
+                .title(FUSED_HEADER_TITLE),
         ),
         area,
     );
@@ -368,7 +409,12 @@ fn draw_table(frame: &mut Frame, area: Rect, app: &FusedApp) {
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &FusedApp) {
-    let line = Line::from(app.status.clone());
+    let tracks = app.snapshot();
+    let line = Line::from(fused_footer_line(
+        &app.status,
+        &tracks,
+        app.selected_mac.as_deref(),
+    ));
     frame.render_widget(
         Paragraph::new(line).block(
             Block::default()
@@ -421,5 +467,58 @@ mod tests {
         assert_eq!(app.selected_mac.as_deref(), Some("aa:aa:aa:00:00:01"));
         app.select_next();
         assert_eq!(app.selected_mac.as_deref(), Some("aa:aa:aa:00:00:02"));
+    }
+
+    #[test]
+    fn selected_detail_reports_rms_conf_and_nodes() {
+        let track = sample_track(1.25, 0.8, 3);
+        assert_eq!(
+            format_selected_track_detail(&track),
+            "rms=1.25m conf=0.80 nodes=3"
+        );
+    }
+
+    #[test]
+    fn footer_adds_detail_only_for_the_selected_mac() {
+        let tracks = vec![sample_track(0.4, 0.55, 2)];
+        let selected = fused_footer_line("epoch ready", &tracks, Some("aa:aa:aa:00:00:10"));
+        assert_eq!(selected, "rms=0.40m conf=0.55 nodes=2  epoch ready");
+        assert_eq!(
+            fused_footer_line("epoch ready", &tracks, None),
+            "epoch ready"
+        );
+        assert_eq!(
+            fused_footer_line("epoch ready", &tracks, Some("bb:bb:bb:00:00:99")),
+            "epoch ready"
+        );
+    }
+
+    #[test]
+    fn help_and_header_call_conf_residual_solver_heuristics() {
+        assert!(
+            fused_help_lines()
+                .iter()
+                .any(|line| line.contains("solver heuristics") && line.contains("not survey-grade")),
+            "help overlay needs the heuristic caveat"
+        );
+        assert!(
+            FUSED_HEADER_TITLE.contains("conf/residual")
+                && FUSED_HEADER_TITLE.contains("solver heuristics")
+                && FUSED_HEADER_TITLE.contains("not survey-grade"),
+            "header title={FUSED_HEADER_TITLE}"
+        );
+    }
+
+    fn sample_track(residual_rms_m: f64, confidence: f64, nodes: usize) -> FusedTrack {
+        FusedTrack {
+            mac: "aa:aa:aa:00:00:10".into(),
+            x: 0.0,
+            y: 5.0,
+            confidence,
+            residual_rms_m,
+            contributing_nodes: nodes,
+            solver: "mlat".into(),
+            status: "ok".into(),
+        }
     }
 }
