@@ -5,11 +5,18 @@
 //! access points (header starts `BSSID`) and stations (header starts
 //! `Station MAC`). airodump does not quote fields, so an ESSID that itself
 //! contains commas is split across several columns; the AP parser rejoins
-//! them. Parsing is pure and never touches the radio.
+//! them. Parsing itself never touches the radio.
+//! [`sample_airodump`] is the live passive listen (root, `airodump-ng`, and a
+//! monitor VIF). It writes a CSV and does not inject, deauth, or associate.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::Duration;
 
-use wifi_radar_core::{normalize_mac, DeviceKind, WifiDevice};
+use wifi_radar_core::{normalize_mac, DeviceKind, ScanError, WifiDevice};
+
+/// How long the Python worker lets airodump-ng listen (`MONITOR_SAMPLE_SEC`).
+pub const AIRODUMP_SAMPLE: Duration = Duration::from_secs(4);
 
 /// RSSI used when airodump reports no signal (`-1`) or a blank power field.
 const NO_SIGNAL_DBM: f64 = -90.0;
@@ -92,6 +99,69 @@ fn parse_power(field: &str) -> f64 {
     match field.trim().parse::<i32>() {
         Ok(-1) | Err(_) => NO_SIGNAL_DBM,
         Ok(p) => f64::from(p),
+    }
+}
+
+/// Argv for a passive `airodump-ng` CSV sample (no shell, no injection flags).
+pub fn sample_args(mon_iface: &str, write_prefix: &Path) -> Vec<String> {
+    vec![
+        mon_iface.to_string(),
+        "--band".into(),
+        "abg".into(),
+        "--write".into(),
+        write_prefix.display().to_string(),
+        "--output-format".into(),
+        "csv".into(),
+        "--write-interval".into(),
+        "1".into(),
+    ]
+}
+
+/// Listen on `mon_iface` for `sample_for`, then parse the CSV airodump wrote.
+///
+/// The child is stopped with SIGINT so it flushes `prefix-01.csv` (Python's
+/// worker does the same). A missing binary is an error. A short or empty
+/// capture is an empty device list, not an error: airodump exits non-zero
+/// on SIGINT even when the CSV is usable. Requires root and a monitor VIF
+/// at runtime; unit tests do not open a radio.
+pub fn sample_airodump(
+    mon_iface: &str,
+    sample_for: Duration,
+) -> Result<(Vec<WifiDevice>, Vec<WifiDevice>), ScanError> {
+    sample_with("airodump-ng", mon_iface, sample_for)
+}
+
+pub(crate) fn sample_with(
+    program: &str,
+    mon_iface: &str,
+    sample_for: Duration,
+) -> Result<(Vec<WifiDevice>, Vec<WifiDevice>), ScanError> {
+    if !crate::monitor::valid_iface_name(mon_iface) {
+        return Err(ScanError::Message(format!(
+            "invalid interface name: {mon_iface:?}"
+        )));
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("wifi_radar_{}_{stamp}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let _cleanup = DirGuard(dir.clone());
+    let prefix = dir.join("dump");
+    let mut cmd = Command::new(program);
+    cmd.args(sample_args(mon_iface, &prefix));
+    crate::proc::spawn_then_interrupt(&mut cmd, sample_for, Duration::from_secs(5))
+        .map_err(|e| ScanError::Message(format!("{program}: {e}")))?;
+    let csv = PathBuf::from(format!("{}-01.csv", prefix.display()));
+    Ok(parse_airodump_file(&csv))
+}
+
+struct DirGuard(PathBuf);
+
+impl Drop for DirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -254,5 +324,45 @@ mod tests {
         assert_eq!(channel_to_freq(14), 2484);
         assert_eq!(channel_to_freq(149), 5745);
         assert_eq!(channel_to_freq(0), 0);
+    }
+
+    #[test]
+    fn sample_argv_is_passive_csv_write() {
+        let args = sample_args("wlan0mon", Path::new("/tmp/wifi_radar_dump"));
+        assert_eq!(
+            args,
+            [
+                "wlan0mon",
+                "--band",
+                "abg",
+                "--write",
+                "/tmp/wifi_radar_dump",
+                "--output-format",
+                "csv",
+                "--write-interval",
+                "1",
+            ]
+        );
+    }
+
+    #[test]
+    fn sample_rejects_unsafe_iface_without_spawning() {
+        let err = sample_airodump("-h", Duration::from_secs(1)).expect_err("reject");
+        assert!(err.to_string().contains("invalid interface"));
+    }
+
+    #[test]
+    fn sample_missing_program_does_not_need_radio() {
+        let err = sample_with(
+            "wifi-radar-no-such-program",
+            "wlan0mon",
+            Duration::from_millis(50),
+        )
+        .expect_err("missing binary");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("airodump") || msg.contains("no-such-program") || msg.contains("os error"),
+            "{msg}"
+        );
     }
 }
