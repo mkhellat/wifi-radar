@@ -96,6 +96,7 @@ fn run(iface: String, demo: bool) -> io::Result<()> {
     app.maybe_scan(true);
 
     let result = event_loop(&mut terminal, &mut app);
+    app.shutdown();
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;

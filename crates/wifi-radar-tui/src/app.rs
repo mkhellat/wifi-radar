@@ -6,7 +6,10 @@ use wifi_radar_core::{
     apply_scene_corrections, BearingCalibrator, CalibrationMode, CalibrationStore,
     CorrectionSummary, DeviceStore, ScanBackend, ScanError, WifiDevice,
 };
-use wifi_radar_linux::{IwCliBackend, Nl80211Backend};
+use wifi_radar_linux::{
+    is_root, sample_airodump, sample_tshark_probes, IwCliBackend, MonitorSession, Nl80211Backend,
+    AIRODUMP_SAMPLE, TSHARK_SAMPLE,
+};
 
 use crate::polar::ScaleState;
 
@@ -50,8 +53,10 @@ pub struct App {
     pub bearing_calibrator: BearingCalibrator,
     /// Increments on each successful scan (gates calibrator samples).
     pub scan_generation: u64,
-    /// Monitor capture toggle (stub — no airodump path in Ratatui yet).
+    /// Passive monitor capture (`m` / `:monitor`). Off until toggled.
     pub mon_enabled: bool,
+    /// `{phy}mon` session. Created only when a rooted live scan asks for it.
+    monitor: MonitorSession,
     pub should_quit: bool,
     last_scan: Instant,
     scan_interval: Duration,
@@ -68,6 +73,7 @@ impl App {
                 iw: IwCliBackend::new(iface.clone()),
             }
         };
+        let monitor = MonitorSession::new(iface.clone());
         Self {
             store: DeviceStore::new(),
             devices: Vec::new(),
@@ -100,6 +106,7 @@ impl App {
             bearing_calibrator: BearingCalibrator::new(),
             scan_generation: 0,
             mon_enabled: false,
+            monitor,
             should_quit: false,
             last_scan: Instant::now() - Duration::from_secs(60),
             scan_interval: Duration::from_secs(8),
@@ -121,13 +128,29 @@ impl App {
         }
     }
 
-    /// Toggle monitor-mode flag (status-only until airodump is wired).
+    /// Toggle passive monitor capture. Off tears the VIF down immediately.
+    ///
+    /// Demo mode never opens a radio. Without root the flag can still flip,
+    /// but scans stay on nl80211 / iw and no VIF is created.
     pub fn toggle_monitor(&mut self) {
         self.mon_enabled = !self.mon_enabled;
-        let state = if self.mon_enabled { "ON" } else { "OFF" };
-        self.status = format!(
-            "Monitor {state} (Ratatui: flag only — airodump/tshark not wired yet)"
-        );
+        if !self.mon_enabled {
+            self.monitor.teardown();
+            self.status = "Monitor OFF".into();
+            return;
+        }
+        self.status = if matches!(self.source, ScanSource::Demo) {
+            "Monitor ON (demo: no radio capture)".into()
+        } else if !is_root() {
+            "Monitor ON needs root — scans stay on nl80211/iw".into()
+        } else {
+            "Monitor ON — passive airodump/tshark on next scan".into()
+        };
+    }
+
+    /// Drop the monitor VIF if this process created it. Also runs on drop.
+    pub fn shutdown(&mut self) {
+        self.monitor.teardown();
     }
 
     /// Show the help overlay (dismiss with any key).
@@ -274,20 +297,33 @@ impl App {
             ScanSource::Live { nl, iw } => scan_live(nl, iw),
         };
 
-        match outcome {
+        let managed = match outcome {
             Ok((batch, backend_name, note)) => {
                 let n = batch.len();
                 self.store.merge(batch);
                 self.scan_generation = self.scan_generation.saturating_add(1);
-                self.refresh_snapshot();
-                self.bearing_calibrator.feed(
-                    self.heading_deg,
-                    &self.devices,
-                    self.scan_generation,
-                );
                 if backend_name != "demo" {
                     self.last_backend = Some(backend_name);
                 }
+                Ok((n, backend_name, note))
+            }
+            Err(e) => Err(e.to_string()),
+        };
+
+        let mon = if self.mon_enabled {
+            Some(self.capture_monitor())
+        } else {
+            None
+        };
+        let mon_merged = mon.as_ref().is_some_and(|(_, merged)| *merged);
+        if managed.is_ok() || mon_merged {
+            self.refresh_snapshot();
+            self.bearing_calibrator
+                .feed(self.heading_deg, &self.devices, self.scan_generation);
+        }
+
+        match managed {
+            Ok((n, backend_name, note)) => {
                 if self.bearing_calibrator.active() {
                     self.status = format!(
                         "CALIBRATING  gen={}  {} device(s)  (h/l turn, c stop)",
@@ -315,6 +351,53 @@ impl App {
             }
             Err(e) => {
                 self.status = format!("scan error on {}: {e}", self.iface);
+            }
+        }
+        if let Some((note, _)) = mon {
+            if !self.bearing_calibrator.active() {
+                self.status = format!("{}  |  {note}", self.status);
+            }
+        }
+    }
+
+    /// One passive monitor sample: airodump-ng, then tshark if it is installed.
+    ///
+    /// Returns a status note and whether any devices were merged. Demo mode
+    /// and non-root runs do not create a VIF and do not spawn capture tools.
+    fn capture_monitor(&mut self) -> (String, bool) {
+        if matches!(self.source, ScanSource::Demo) {
+            return ("monitor skipped (demo)".into(), false);
+        }
+        if !is_root() {
+            return ("monitor needs root; staying on nl80211/iw".into(), false);
+        }
+        if let Err(e) = self.monitor.ensure() {
+            return (format!("monitor interface failed: {e}"), false);
+        }
+        let mon = self.monitor.mon_iface().to_string();
+        match sample_airodump(&mon, AIRODUMP_SAMPLE) {
+            Err(e) => (format!("monitor error: {e}"), false),
+            Ok((aps, clients)) => {
+                let n_ap = aps.len();
+                let n_cl = clients.len();
+                let mut merged = n_ap + n_cl > 0;
+                self.store.merge(aps);
+                self.store.merge(clients);
+                let (n_ad, extra) = match sample_tshark_probes(&mon, TSHARK_SAMPLE) {
+                    Ok(adapters) => {
+                        let n = adapters.len();
+                        if n > 0 {
+                            merged = true;
+                        }
+                        self.store.merge(adapters);
+                        (n, String::new())
+                    }
+                    Err(e) => (0, format!("; tshark: {e}")),
+                };
+                (
+                    format!("monitor: {n_ap} APs, {n_cl} clients, {n_ad} adapters{extra}"),
+                    merged,
+                )
             }
         }
     }
@@ -363,9 +446,8 @@ impl App {
         {
             Ok(ref_dbm) => {
                 self.refresh_snapshot();
-                self.status = format!(
-                    "Distance calib {mac} → {distance_m} m (rssi_at_1m={ref_dbm:.1})"
-                );
+                self.status =
+                    format!("Distance calib {mac} → {distance_m} m (rssi_at_1m={ref_dbm:.1})");
             }
             Err(e) => self.status = format!("distance calib failed: {e}"),
         }
@@ -421,6 +503,12 @@ impl App {
 
     pub fn clear_selection(&mut self) {
         self.selected_mac = None;
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.monitor.teardown();
     }
 }
 
@@ -594,8 +682,46 @@ mod tests {
         app.toggle_monitor();
         assert!(app.mon_enabled);
         assert!(app.status.contains("Monitor ON"));
+        assert!(app.status.contains("demo"));
+        assert!(!app.status.contains("flag only"));
         app.toggle_monitor();
         assert!(!app.mon_enabled);
+        assert!(app.status.contains("Monitor OFF"));
+        assert!(!app.monitor.created());
+    }
+
+    #[test]
+    fn monitor_capture_demo_does_not_open_a_vif() {
+        let mut app = App::new("wlan0".into(), true);
+        app.mon_enabled = true;
+        let (note, merged) = app.capture_monitor();
+        assert!(!merged);
+        assert!(note.contains("demo"));
+        assert!(!app.monitor.created());
+    }
+
+    #[test]
+    fn monitor_capture_without_root_stays_on_managed_scan() {
+        if wifi_radar_linux::is_root() {
+            return;
+        }
+        let mut app = App::new("wlan0".into(), false);
+        app.mon_enabled = true;
+        let (note, merged) = app.capture_monitor();
+        assert!(!merged);
+        assert!(note.contains("root"));
+        assert!(note.contains("nl80211"));
+        assert!(!app.monitor.created());
+    }
+
+    #[test]
+    fn demo_scan_appends_monitor_note_when_enabled() {
+        let mut app = App::new("wlan0".into(), true);
+        app.toggle_monitor();
+        app.maybe_scan(true);
+        assert!(app.status.contains("DEMO"));
+        assert!(app.status.contains("demo"));
+        assert!(!app.status.contains("flag only"));
     }
 
     #[test]
