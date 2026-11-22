@@ -8,9 +8,8 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use wifi_radar_core::{
-    apply_scene_corrections as apply_scene_corrections_core, CalibrationMode,
-    CalibrationStore as CoreCalib, DeviceStore as CoreStore, WifiDevice,
-    VERSION as CORE_VERSION,
+    apply_scene_corrections as apply_scene_corrections_core, normalize_mac, CalibrationMode,
+    CalibrationStore as CoreCalib, DeviceStore as CoreStore, WifiDevice, VERSION as CORE_VERSION,
 };
 
 /// Linked Rust core version string.
@@ -56,6 +55,57 @@ impl PyDeviceStore {
             d.freq_mhz = f;
         }
         self.inner.merge([d]);
+    }
+
+    /// Merge a batch of observation dicts (worker-scan shape) with EMA RSSI.
+    ///
+    /// Each dict carries at least `mac` and `rssi_dbm`; optional `kind`, `ssid`,
+    /// `vendor`, `channel`, `freq_mhz`, `security`, `in_use`, `associated_bssid`,
+    /// and `probe_ssids` mirror the fields the Python worker fills per scan.
+    fn merge(&mut self, devices: Vec<Bound<'_, PyDict>>) -> PyResult<()> {
+        let mut batch = Vec::with_capacity(devices.len());
+        for d in &devices {
+            batch.push(device_from_dict(d)?);
+        }
+        self.inner.merge(batch);
+        Ok(())
+    }
+
+    /// Return one device as a dict (MAC normalized), or `None` when absent.
+    fn get<'py>(&self, py: Python<'py>, mac: &str) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let key = normalize_mac(mac);
+        match self.inner.devices().get(&key) {
+            Some(d) => Ok(Some(device_to_dict(py, d)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Write-through a bearing for one device (MAC normalized).
+    ///
+    /// Pass `bearing_deg=None` to clear the calibrated bearing. Returns `True`
+    /// when the MAC is present, `False` otherwise.
+    #[pyo3(signature = (mac, bearing_deg, confidence=1.0, manual=false))]
+    fn set_bearing(
+        &mut self,
+        mac: &str,
+        bearing_deg: Option<f64>,
+        confidence: f64,
+        manual: bool,
+    ) -> bool {
+        match self.inner.device_mut(mac) {
+            Some(dev) => {
+                dev.bearing_deg = bearing_deg;
+                dev.bearing_confidence = confidence;
+                dev.bearing_manual = manual;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Expire stale entries and return removed MACs (normalized).
+    fn expire(&mut self) -> Vec<String> {
+        self.inner.expire()
     }
 
     /// Number of devices currently in the store (before expiry).
@@ -211,9 +261,15 @@ fn device_to_dict<'py>(py: Python<'py>, d: &WifiDevice) -> PyResult<Bound<'py, P
         },
     )?;
     dict.set_item("ssid", d.ssid.as_str())?;
+    dict.set_item("vendor", d.vendor.as_str())?;
     dict.set_item("channel", d.channel)?;
     dict.set_item("freq_mhz", d.freq_mhz)?;
     dict.set_item("rssi_dbm", d.rssi_dbm)?;
+    dict.set_item("last_seen", d.last_seen)?;
+    dict.set_item("security", d.security.as_str())?;
+    dict.set_item("in_use", d.in_use)?;
+    dict.set_item("associated_bssid", d.associated_bssid.as_str())?;
+    dict.set_item("probe_ssids", d.probe_ssids.clone())?;
     dict.set_item("distance_m", d.distance_m())?;
     // `bearing_deg` stays display-facing for snapshot consumers; raw pin in
     // `calibrated_bearing_deg` for apply_scene_corrections round-trips.
@@ -277,6 +333,31 @@ fn device_from_dict(dict: &Bound<'_, PyDict>) -> PyResult<WifiDevice> {
     if let Some(v) = dict.get_item("freq_mhz")? {
         if !v.is_none() {
             d.freq_mhz = v.extract()?;
+        }
+    }
+    if let Some(v) = dict.get_item("vendor")? {
+        if !v.is_none() {
+            d.vendor = v.extract()?;
+        }
+    }
+    if let Some(v) = dict.get_item("security")? {
+        if !v.is_none() {
+            d.security = v.extract()?;
+        }
+    }
+    if let Some(v) = dict.get_item("in_use")? {
+        if !v.is_none() {
+            d.in_use = v.extract()?;
+        }
+    }
+    if let Some(v) = dict.get_item("associated_bssid")? {
+        if !v.is_none() {
+            d.associated_bssid = v.extract()?;
+        }
+    }
+    if let Some(v) = dict.get_item("probe_ssids")? {
+        if !v.is_none() {
+            d.probe_ssids = v.extract()?;
         }
     }
     d.bearing_deg = opt_f64(dict, "calibrated_bearing_deg")?;
@@ -386,13 +467,123 @@ mod tests {
             store.merge_hotspot("aa:bb:cc:dd:ee:02", -40.0, Some("near"), None, None);
             let snap = store.snapshot(py).expect("snapshot");
             assert_eq!(snap.len(), 2);
-            let mac: String = snap[0]
-                .get_item("mac")
+            let mac: String = snap[0].get_item("mac").unwrap().unwrap().extract().unwrap();
+            assert_eq!(mac, "aa:bb:cc:dd:ee:02");
+        });
+    }
+
+    #[test]
+    fn merge_dicts_apply_ema_and_get_roundtrips() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let mut store = PyDeviceStore::new();
+            let first = PyDict::new(py);
+            first.set_item("mac", "AA:BB:CC:DD:EE:01").unwrap();
+            first.set_item("kind", "hotspot").unwrap();
+            first.set_item("rssi_dbm", -40.0).unwrap();
+            first.set_item("ssid", "home").unwrap();
+            first.set_item("channel", 6u32).unwrap();
+            first.set_item("freq_mhz", 2437u32).unwrap();
+            store.merge(vec![first]).unwrap();
+            let second = PyDict::new(py);
+            second.set_item("mac", "aa:bb:cc:dd:ee:01").unwrap();
+            second.set_item("kind", "hotspot").unwrap();
+            second.set_item("rssi_dbm", -80.0).unwrap();
+            store.merge(vec![second]).unwrap();
+            assert_eq!(store.len(), 1);
+            let got = store.get(py, "AA-BB-CC-DD-EE-01").unwrap().unwrap();
+            let rssi: f64 = got
+                .get_item("rssi_dbm")
                 .unwrap()
                 .unwrap()
                 .extract()
                 .unwrap();
-            assert_eq!(mac, "aa:bb:cc:dd:ee:02");
+            let expected = 0.25 * -80.0 + 0.75 * -40.0;
+            assert!((rssi - expected).abs() < 1e-9);
+            let ssid: String = got.get_item("ssid").unwrap().unwrap().extract().unwrap();
+            assert_eq!(ssid, "home");
+            assert!(store.get(py, "00:00:00:00:00:99").unwrap().is_none());
+        });
+    }
+
+    #[test]
+    fn merge_dicts_carry_probe_and_kind() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let mut store = PyDeviceStore::new();
+            let adapter = PyDict::new(py);
+            adapter.set_item("mac", "aa:bb:cc:dd:ee:02").unwrap();
+            adapter.set_item("kind", "adapter").unwrap();
+            adapter.set_item("rssi_dbm", -60.0).unwrap();
+            adapter
+                .set_item("probe_ssids", vec!["cafe-wifi", "office"])
+                .unwrap();
+            adapter.set_item("security", "WPA2").unwrap();
+            store.merge(vec![adapter]).unwrap();
+            let got = store.get(py, "aa:bb:cc:dd:ee:02").unwrap().unwrap();
+            let kind: String = got.get_item("kind").unwrap().unwrap().extract().unwrap();
+            assert_eq!(kind, "adapter");
+            let probes: Vec<String> = got
+                .get_item("probe_ssids")
+                .unwrap()
+                .unwrap()
+                .extract()
+                .unwrap();
+            assert_eq!(probes, vec!["cafe-wifi".to_string(), "office".to_string()]);
+            let security: String = got
+                .get_item("security")
+                .unwrap()
+                .unwrap()
+                .extract()
+                .unwrap();
+            assert_eq!(security, "WPA2");
+        });
+    }
+
+    #[test]
+    fn set_bearing_writethrough_and_clear() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let mut store = PyDeviceStore::new();
+            store.merge_hotspot("aa:bb:cc:dd:ee:03", -50.0, None, None, None);
+            assert!(store.set_bearing("AA:BB:CC:DD:EE:03", Some(123.0), 0.8, true));
+            let got = store.get(py, "aa:bb:cc:dd:ee:03").unwrap().unwrap();
+            let cal_b: f64 = got
+                .get_item("calibrated_bearing_deg")
+                .unwrap()
+                .unwrap()
+                .extract()
+                .unwrap();
+            assert!((cal_b - 123.0).abs() < 1e-9);
+            let manual: bool = got
+                .get_item("bearing_manual")
+                .unwrap()
+                .unwrap()
+                .extract()
+                .unwrap();
+            assert!(manual);
+            // Clearing with None drops the calibrated bearing.
+            assert!(store.set_bearing("aa:bb:cc:dd:ee:03", None, 0.0, false));
+            let got2 = store.get(py, "aa:bb:cc:dd:ee:03").unwrap().unwrap();
+            assert!(got2
+                .get_item("calibrated_bearing_deg")
+                .unwrap()
+                .unwrap()
+                .is_none());
+            // Unknown MAC reports no write-through.
+            assert!(!store.set_bearing("00:00:00:00:00:99", Some(1.0), 1.0, false));
+        });
+    }
+
+    #[test]
+    fn expire_removes_stale_entries() {
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|_py| {
+            let mut store = PyDeviceStore::new();
+            store.merge_hotspot("aa:bb:cc:dd:ee:04", -50.0, None, None, None);
+            // Default TTL (30 s) keeps a fresh entry.
+            assert!(store.expire().is_empty());
+            assert_eq!(store.len(), 1);
         });
     }
 
@@ -451,8 +642,7 @@ mod tests {
             other.set_item("mac", "aa:aa:aa:00:00:02").unwrap();
             other.set_item("kind", "hotspot").unwrap();
             other.set_item("rssi_dbm", -55.0).unwrap();
-            let (rows, summary) =
-                apply_scene_corrections(py, vec![anchor, other], &cal).unwrap();
+            let (rows, summary) = apply_scene_corrections(py, vec![anchor, other], &cal).unwrap();
             assert_eq!(rows.len(), 2);
             let mode: String = summary
                 .get_item("mode")
@@ -475,10 +665,7 @@ mod tests {
                 .extract()
                 .unwrap();
             assert_eq!(note, "scene distance");
-            let override_m = rows[1]
-                .get_item("distance_override_m")
-                .unwrap()
-                .unwrap();
+            let override_m = rows[1].get_item("distance_override_m").unwrap().unwrap();
             assert!(!override_m.is_none());
         });
     }
