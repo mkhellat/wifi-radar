@@ -247,7 +247,100 @@ pub fn paint_polar(
     }
 }
 
+/// Confidence at or above this paints cyan. A display bin, not a probability.
+const FUSED_CONF_HIGH: f64 = 0.70;
+/// Confidence at or above this, and below [`FUSED_CONF_HIGH`], paints yellow.
+const FUSED_CONF_MID: f64 = 0.40;
+
+/// Map fused-track confidence to a polar glyph color.
+///
+/// High (≥ 0.70) is cyan, mid (≥ 0.40) is yellow, and low or non-finite
+/// is dark gray. The bins are a solver-heuristic display, not survey-grade
+/// accuracy.
+pub fn fused_confidence_color(confidence: f64) -> ratatui::style::Color {
+    use ratatui::style::Color;
+    if !confidence.is_finite() {
+        return Color::DarkGray;
+    }
+    if confidence >= FUSED_CONF_HIGH {
+        Color::Cyan
+    } else if confidence >= FUSED_CONF_MID {
+        Color::Yellow
+    } else {
+        Color::DarkGray
+    }
+}
+
+/// `◆` when the solver status is `ok`; `?` for every other status.
+pub fn fused_track_glyph(status: &str) -> &'static str {
+    if status == "ok" {
+        "◆"
+    } else {
+        "?"
+    }
+}
+
+/// Glyph style: confidence color when `ok`, dim dark gray otherwise.
+pub fn fused_track_style(confidence: f64, status: &str) -> ratatui::style::Style {
+    use ratatui::style::{Color, Modifier, Style};
+    if status == "ok" {
+        Style::default().fg(fused_confidence_color(confidence))
+    } else {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    }
+}
+
+/// Screen radius for a residual ring, clamped to the polar scale.
+///
+/// Non-finite, negative, or zero RMS yields 0. A non-positive scale
+/// yields 0 so a broken scale cannot paint a full-canvas ring. This is
+/// the residual RMS drawn as a radius, not a covariance ellipse.
+pub fn residual_ring_radius(residual_rms_m: f64, scale_max_m: f64, max_radius: f64) -> f64 {
+    if !residual_rms_m.is_finite()
+        || residual_rms_m <= 0.0
+        || !scale_max_m.is_finite()
+        || scale_max_m <= 0.0
+        || !max_radius.is_finite()
+        || max_radius <= 0.0
+    {
+        return 0.0;
+    }
+    distance_to_radius(residual_rms_m, scale_max_m, max_radius)
+}
+
+/// Paint a coarse dotted circle of `·` around `(cx, cy)`.
+///
+/// Radius is in the same cell space as [`polar_to_cell`]. Rings under
+/// one cell are skipped. The mark is an isotropic residual hint, not an
+/// error ellipse.
+pub fn paint_residual_ring(
+    buf: &mut ratatui::buffer::Buffer,
+    area: ratatui::layout::Rect,
+    cx: u16,
+    cy: u16,
+    radius: f64,
+) {
+    use ratatui::style::{Color, Style};
+    if !radius.is_finite() || radius < 1.0 {
+        return;
+    }
+    let dim = Style::default().fg(Color::DarkGray);
+    for deg in (0..360).step_by(15) {
+        let (x, y) = polar_to_cell(cx, cy, f64::from(deg), radius);
+        if (x, y) == (cx, cy) || !in_area(area, x, y) {
+            continue;
+        }
+        buf.set_string(x, y, "·", dim);
+    }
+}
+
 /// Paint polar rings and fused 2D tracks (`x`/`y` metres in the shared frame).
+///
+/// Glyph color follows [`fused_confidence_color`] when status is `ok`.
+/// Any other status is a dim `?`. The selected track also gets a dotted
+/// residual ring ([`paint_residual_ring`]). Best-effort 2D display only.
 pub fn paint_fused_tracks(
     buf: &mut ratatui::buffer::Buffer,
     area: ratatui::layout::Rect,
@@ -345,11 +438,16 @@ pub fn paint_fused_tracks(
         if !in_area(area, x, y) {
             continue;
         }
-        let mut style = Style::default().fg(Color::Magenta);
-        if selected_mac == Some(t.mac.as_str()) {
+        let selected = selected_mac == Some(t.mac.as_str());
+        if selected {
+            let ring_r = residual_ring_radius(t.residual_rms_m, scale_max_m, max_r);
+            paint_residual_ring(buf, area, x, y, ring_r);
+        }
+        let mut style = fused_track_style(t.confidence, &t.status);
+        if selected {
             style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
         }
-        buf.set_string(x, y, "◆", style);
+        buf.set_string(x, y, fused_track_glyph(&t.status), style);
     }
 }
 
@@ -402,5 +500,186 @@ mod tests {
         let d = WifiDevice::hotspot("aa:bb:cc:dd:ee:01", -35.0); // ~1.5m-ish
         let (_rings, max_m) = s.pick(&[d]);
         assert!(max_m <= 30.0);
+    }
+
+    #[test]
+    fn confidence_color_bands_are_cyan_yellow_dark_gray() {
+        use ratatui::style::Color;
+
+        assert_eq!(fused_confidence_color(0.70), Color::Cyan);
+        assert_eq!(fused_confidence_color(1.0), Color::Cyan);
+        assert_eq!(fused_confidence_color(0.40), Color::Yellow);
+        assert_eq!(fused_confidence_color(0.69), Color::Yellow);
+        assert_eq!(fused_confidence_color(0.0), Color::DarkGray);
+        assert_eq!(fused_confidence_color(0.39), Color::DarkGray);
+        assert_eq!(fused_confidence_color(f64::NAN), Color::DarkGray);
+        assert_eq!(fused_confidence_color(-1.0), Color::DarkGray);
+    }
+
+    #[test]
+    fn fused_glyph_is_diamond_only_when_status_ok() {
+        assert_eq!(fused_track_glyph("ok"), "◆");
+        assert_eq!(fused_track_glyph("insufficient_nodes"), "?");
+        assert_eq!(fused_track_glyph("insufficient_geometry"), "?");
+        assert_eq!(fused_track_glyph(""), "?");
+    }
+
+    #[test]
+    fn non_ok_style_is_dim_and_ignores_high_confidence() {
+        use ratatui::style::{Color, Modifier};
+
+        let style = fused_track_style(0.95, "insufficient_nodes");
+        assert_eq!(style.fg, Some(Color::DarkGray));
+        assert!(style.add_modifier.contains(Modifier::DIM));
+        let ok = fused_track_style(0.95, "ok");
+        assert_eq!(ok.fg, Some(Color::Cyan));
+        assert!(!ok.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn residual_ring_radius_clamps_to_scale() {
+        assert!((residual_ring_radius(15.0, 30.0, 10.0) - 5.0).abs() < 1e-9);
+        assert!((residual_ring_radius(1000.0, 30.0, 10.0) - 10.0).abs() < 1e-9);
+        assert!((residual_ring_radius(0.0, 30.0, 10.0)).abs() < 1e-9);
+        assert!((residual_ring_radius(-3.0, 30.0, 10.0)).abs() < 1e-9);
+        assert!((residual_ring_radius(f64::NAN, 30.0, 10.0)).abs() < 1e-9);
+        assert!((residual_ring_radius(f64::INFINITY, 30.0, 10.0)).abs() < 1e-9);
+        assert!((residual_ring_radius(4.0, 0.0, 10.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn residual_ring_paints_a_coarse_dotted_circle() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        use ratatui::style::Color;
+
+        let area = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(area);
+        paint_residual_ring(&mut buf, area, 40, 20, 8.0);
+        let dots = cells_with_symbol(&buf, "·");
+        assert!(
+            dots.len() >= 8,
+            "expected a dotted ring, got {} cells",
+            dots.len()
+        );
+        assert!(dots.iter().all(|(_, _, fg)| *fg == Color::DarkGray));
+        let (min_x, max_x, min_y, max_y) = span_of(&dots);
+        assert!(max_x - min_x >= 8, "ring should spread in x");
+        assert!(max_y - min_y >= 3, "ring should spread in y");
+        assert!(dots.iter().all(|(x, y, _)| *x != 40 || *y != 20));
+    }
+
+    #[test]
+    fn paint_selected_high_confidence_shows_cyan_diamond_and_residual_ring() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        use ratatui::style::{Color, Modifier};
+
+        let area = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(area);
+        let mut scale = ScaleState::default();
+        let track = sample_fused_track(0.91, 4.0, "ok");
+        paint_fused_tracks(
+            &mut buf,
+            area,
+            &[track],
+            0.0,
+            Some("aa:aa:aa:00:00:10"),
+            &mut scale,
+        );
+        let glyphs = cells_with_symbol(&buf, "◆");
+        assert_eq!(glyphs.len(), 1, "one fused glyph");
+        assert_eq!(glyphs[0].2, Color::Cyan);
+        let cell = &buf[(glyphs[0].0, glyphs[0].1)];
+        assert!(cell.modifier.contains(Modifier::REVERSED));
+        assert!(cell.modifier.contains(Modifier::BOLD));
+        let dots = cells_with_symbol(&buf, "·");
+        assert!(
+            dots.len() >= 8,
+            "selected residual ring should be a dotted arc, got {}",
+            dots.len()
+        );
+        let (min_x, max_x, min_y, max_y) = span_of(&dots);
+        assert!(max_x > min_x && max_y > min_y, "ring is not a line");
+    }
+
+    #[test]
+    fn paint_unselected_track_skips_residual_ring() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        use ratatui::style::Color;
+
+        let area = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(area);
+        let mut scale = ScaleState::default();
+        let track = sample_fused_track(0.55, 4.0, "ok");
+        paint_fused_tracks(&mut buf, area, &[track], 0.0, None, &mut scale);
+        assert!(cells_with_symbol(&buf, "·").is_empty());
+        let glyphs = cells_with_symbol(&buf, "◆");
+        assert_eq!(glyphs.len(), 1);
+        assert_eq!(glyphs[0].2, Color::Yellow);
+    }
+
+    #[test]
+    fn paint_non_ok_track_is_dim_question_mark() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        use ratatui::style::{Color, Modifier};
+
+        let area = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(area);
+        let mut scale = ScaleState::default();
+        let track = sample_fused_track(0.95, 4.0, "insufficient_geometry");
+        paint_fused_tracks(&mut buf, area, &[track], 0.0, None, &mut scale);
+        assert!(cells_with_symbol(&buf, "◆").is_empty());
+        let marks = cells_with_symbol(&buf, "?");
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].2, Color::DarkGray);
+        assert!(buf[(marks[0].0, marks[0].1)]
+            .modifier
+            .contains(Modifier::DIM));
+        assert!(cells_with_symbol(&buf, "·").is_empty());
+    }
+
+    fn sample_fused_track(
+        confidence: f64,
+        residual_rms_m: f64,
+        status: &str,
+    ) -> wifi_radar_fuse::FusedTrack {
+        wifi_radar_fuse::FusedTrack {
+            mac: "aa:aa:aa:00:00:10".into(),
+            x: 0.0,
+            y: 5.0,
+            confidence,
+            residual_rms_m,
+            contributing_nodes: 3,
+            solver: "mlat".into(),
+            status: status.into(),
+        }
+    }
+
+    fn cells_with_symbol(
+        buf: &ratatui::buffer::Buffer,
+        symbol: &str,
+    ) -> Vec<(u16, u16, ratatui::style::Color)> {
+        let area = buf.area;
+        let mut out = Vec::new();
+        for y in area.y..area.y.saturating_add(area.height) {
+            for x in area.x..area.x.saturating_add(area.width) {
+                let cell = &buf[(x, y)];
+                if cell.symbol() == symbol {
+                    out.push((x, y, cell.fg));
+                }
+            }
+        }
+        out
+    }
+
+    fn span_of(cells: &[(u16, u16, ratatui::style::Color)]) -> (u16, u16, u16, u16) {
+        let min_x = cells.iter().map(|c| c.0).min().unwrap();
+        let max_x = cells.iter().map(|c| c.0).max().unwrap();
+        let min_y = cells.iter().map(|c| c.1).min().unwrap();
+        let max_y = cells.iter().map(|c| c.1).max().unwrap();
+        (min_x, max_x, min_y, max_y)
     }
 }
