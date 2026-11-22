@@ -11,3 +11,6 @@ readme = "README.md"
 md5 = "0.7"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# Plaintext WebSocket (handshake only; no TLS feature). 0.28 keeps
+# rust-version 1.63, under the workspace MSRV of 1.75. 0.30 needs 1.85.
+tungstenite = { version = "0.28.0", default-features = false, features = ["handshake"] }
