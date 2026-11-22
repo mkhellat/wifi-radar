@@ -11,6 +11,9 @@ cargo run -p wifi-radar-tui -- --demo
 # Live scan: prefer nl80211 GET_SCAN dump, fall back to iw-cli
 cargo run -p wifi-radar-tui -- -i wlan0
 
+# Same, as root, then press m for passive airodump-ng + optional tshark
+sudo cargo run -p wifi-radar-tui -- -i wlan0
+
 # Fused-track viewer (best-effort 2D — not survey-grade)
 cargo run -p wifi-radar-tui -- --fused --demo
 # Files:  cargo run -p wifi-radar-tui -- --fused tracks.ndjson
@@ -19,7 +22,7 @@ cargo run -p wifi-radar-tui -- --fused --demo
 
 Keys: `h`/`l` heading (±5°), `H`/`L` fast (±15°), `j`/`k` select,
 `g`/`G` first/last, `Esc` deselect, `r` rescan, `q` quit, `?` help,
-`c` rotation calib, `m` monitor flag, `:` command.
+`c` rotation calib, `m` passive monitor, `:` command.
 
 Commands: `:mode honest` / `:mode anchor` (persisted), `:clear` / `:x`,
 `:calib` / `:c`, `:monitor` / `:m`, `:help` / `:h`, `:r` rescan, `:q` quit.
@@ -31,6 +34,13 @@ Header shows scene-correction status (`mode=… anchors=… distx=…`).
 
 Live mode tries genetlink `nl80211` first; if that errors, the same pass
 falls back to `iw-cli`. Status line shows which backend won.
+
+`m` / `:monitor` turns on a passive sample on `{iface}mon`: a short
+`airodump-ng` CSV capture, then `tshark` probe requests when `tshark` is
+installed. That needs root. Without root the status line says so and the
+scan stays on nl80211 / iw. Turning it off or quitting deletes the VIF
+when this process created it. Capture is receive-only (no injection,
+deauth, or association). Distance remains an RSSI estimate.
 
 The UI shows a **polar canvas** (rings, sweep, device glyphs) above the
 device table. Selection is by MAC (stable across RSSI re-sorts).
