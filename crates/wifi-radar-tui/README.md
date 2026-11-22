@@ -20,6 +20,13 @@ cargo run -p wifi-radar-tui -- --fused --demo
 # Pipe:   wifi-radar-fuse --listen 127.0.0.1:9800 | cargo run -p wifi-radar-tui -- --fused
 ```
 
+On `--fused`, polar glyph color follows confidence: cyan at 0.70 and
+above, yellow at 0.40 and above, dark gray below that. A status other
+than `ok` is a dim `?`. Selecting a track puts `rms`, `conf`, and
+`nodes` on the footer and draws a dotted residual ring clamped to the
+range scale. Those marks are solver heuristics, not a survey-grade
+error and not a covariance ellipse.
+
 Keys: `h`/`l` heading (±5°), `H`/`L` fast (±15°), `j`/`k` select,
 `g`/`G` first/last, `Esc` deselect, `r` rescan, `q` quit, `?` help,
 `c` rotation calib, `m` passive monitor, `:` command.
