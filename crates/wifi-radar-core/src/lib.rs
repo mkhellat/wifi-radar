@@ -11,6 +11,7 @@ pub mod fusion;
 pub mod models;
 pub mod node_obs;
 pub mod obs_transport;
+pub mod obs_ws;
 pub mod scan;
 pub mod store;
 pub mod util;
@@ -36,6 +37,10 @@ pub use node_obs::{
     DeviceObservation, NodeObservation, NodePose, NODE_OBS_SCHEMA_VERSION,
 };
 pub use obs_transport::{read_observation, read_observation_tcp, write_observation};
+pub use obs_ws::{
+    observation_frame_text, observation_from_ws_text, read_observations_from_ws_server,
+    write_observation_ws_client, write_observations_ws_client,
+};
 pub use scan::{ScanBackend, ScanError};
 pub use store::{DeviceStore, DEFAULT_TTL_SEC, RSSI_EMA_ALPHA};
 pub use util::normalize_mac;
