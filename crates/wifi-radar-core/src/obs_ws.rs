@@ -96,7 +96,7 @@ pub fn write_observations_ws_client(addr: &str, batches: &[NodeObservation]) -> 
         return Err("no observations to send".into());
     }
     let url = ws_url(addr)?;
-    let mut stream = TcpStream::connect(addr).map_err(|e| format!("connect {addr}: {e}"))?;
+    let stream = TcpStream::connect(addr).map_err(|e| format!("connect {addr}: {e}"))?;
     stream
         .set_nodelay(true)
         .map_err(|e| format!("nodelay {addr}: {e}"))?;

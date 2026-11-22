@@ -9,7 +9,7 @@ use wifi_radar_core::{NodePose, ScanBackend};
 use wifi_radar_linux::{IwCliBackend, Nl80211Backend};
 use wifi_radar_node::{
     demo_devices, observation_from_devices, observation_to_ndjson, publish_observation,
-    run_observation_loop, scan_once, LoopConfig, NodeConfig,
+    publish_observation_ws, run_observation_loop, scan_once, LoopConfig, NodeConfig,
 };
 
 fn usage() -> ! {
@@ -22,11 +22,13 @@ fn usage() -> ! {
            --demo                Synthetic devices (no radio)\n\
            --pretty              Pretty-print JSON instead of NDJSON (stdout)\n\
            --publish HOST:PORT   Send NDJSON to a wifi-radar-fuse --listen peer\n\
+           --publish-ws HOST:PORT  Send one NDJSON text frame to --listen-ws\n\
            --interval SEC        Repeat scan every SEC seconds (default: once)\n\
            --count N             Stop after N iterations (requires --interval)\n\
          \n\
-         Default: scan once; write to stdout unless --publish is set.\n\
-         With --interval, loop until --count or forever.\n\
+         Default: scan once; write to stdout unless --publish or\n\
+         --publish-ws is set. With --interval, loop until --count or forever.\n\
+         --publish-ws is plaintext ws:// (one text frame, then close).\n\
          Passive observation only — not survey-grade localization."
     );
     process::exit(2);
@@ -80,29 +82,45 @@ fn collect_observation(
     }
 }
 
+enum Sink {
+    Stdout { pretty: bool },
+    Tcp(String),
+    Ws(String),
+}
+
 fn emit_observation(
     obs: &wifi_radar_core::NodeObservation,
-    publish: &Option<String>,
-    pretty: bool,
+    sink: &Sink,
 ) -> Result<(), String> {
-    if let Some(addr) = publish {
-        publish_observation(addr, obs)?;
-        eprintln!(
-            "wifi-radar-node: published {} device(s) as {} to {addr}",
-            obs.device_observations.len(),
-            obs.node_id
-        );
-        return Ok(());
+    match sink {
+        Sink::Tcp(addr) => {
+            publish_observation(addr, obs)?;
+            eprintln!(
+                "wifi-radar-node: published {} device(s) as {} to {addr}",
+                obs.device_observations.len(),
+                obs.node_id
+            );
+        }
+        Sink::Ws(addr) => {
+            publish_observation_ws(addr, obs)?;
+            eprintln!(
+                "wifi-radar-node: published {} device(s) as {} via websocket to {addr}",
+                obs.device_observations.len(),
+                obs.node_id
+            );
+        }
+        Sink::Stdout { pretty } => {
+            let out = if *pretty {
+                obs.to_json_pretty()?
+            } else {
+                observation_to_ndjson(obs)?
+            };
+            let mut stdout = io::stdout().lock();
+            stdout
+                .write_all(out.as_bytes())
+                .map_err(|e| e.to_string())?;
+        }
     }
-    let out = if pretty {
-        obs.to_json_pretty()?
-    } else {
-        observation_to_ndjson(obs)?
-    };
-    let mut stdout = io::stdout().lock();
-    stdout
-        .write_all(out.as_bytes())
-        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -118,6 +136,7 @@ fn run() -> Result<(), String> {
     let mut demo = false;
     let mut pretty = false;
     let mut publish: Option<String> = None;
+    let mut publish_ws: Option<String> = None;
     let mut interval: Option<f64> = None;
     let mut count: Option<usize> = None;
     let mut i = 0;
@@ -141,6 +160,10 @@ fn run() -> Result<(), String> {
             "--publish" => {
                 i += 1;
                 publish = Some(args.get(i).ok_or("--publish needs HOST:PORT")?.clone());
+            }
+            "--publish-ws" => {
+                i += 1;
+                publish_ws = Some(args.get(i).ok_or("--publish-ws needs HOST:PORT")?.clone());
             }
             "--interval" => {
                 i += 1;
@@ -170,13 +193,26 @@ fn run() -> Result<(), String> {
         i += 1;
     }
 
+    if publish.is_some() && publish_ws.is_some() {
+        return Err("--publish and --publish-ws cannot be combined".into());
+    }
     if pretty && publish.is_some() {
         return Err("--pretty cannot be combined with --publish".into());
+    }
+    if pretty && publish_ws.is_some() {
+        return Err("--pretty cannot be combined with --publish-ws".into());
     }
     if count.is_some() && interval.is_none() {
         return Err("--count requires --interval".into());
     }
 
+    let sink = if let Some(addr) = publish {
+        Sink::Tcp(addr)
+    } else if let Some(addr) = publish_ws {
+        Sink::Ws(addr)
+    } else {
+        Sink::Stdout { pretty }
+    };
     let cfg = NodeConfig::new(node_id, pose);
     let mono_start = Instant::now();
 
@@ -184,9 +220,12 @@ fn run() -> Result<(), String> {
         let loop_cfg = LoopConfig::new(Duration::from_secs_f64(sec), count);
         let n = run_observation_loop(&loop_cfg, |iter| {
             let obs = collect_observation(&cfg, demo, &iface, mono_start)?;
-            emit_observation(&obs, &publish, pretty)?;
-            if publish.is_none() {
-                eprintln!("wifi-radar-node: iteration {iter} ({} devices)", obs.device_observations.len());
+            emit_observation(&obs, &sink)?;
+            if matches!(sink, Sink::Stdout { .. }) {
+                eprintln!(
+                    "wifi-radar-node: iteration {iter} ({} devices)",
+                    obs.device_observations.len()
+                );
             }
             Ok(())
         })?;
@@ -195,5 +234,5 @@ fn run() -> Result<(), String> {
     }
 
     let obs = collect_observation(&cfg, demo, &iface, mono_start)?;
-    emit_observation(&obs, &publish, pretty)
+    emit_observation(&obs, &sink)
 }
