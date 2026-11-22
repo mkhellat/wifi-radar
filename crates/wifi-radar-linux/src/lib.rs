@@ -5,10 +5,12 @@
 
 #![deny(missing_docs)]
 
+pub mod airodump;
 pub mod bss;
 pub mod iw;
 pub mod nl80211;
 
+pub use airodump::{parse_airodump_csv, parse_airodump_file};
 pub use bss::{device_from_bss_attrs, devices_from_nl80211_attrs, RawAttr};
 pub use iw::IwCliBackend;
 pub use nl80211::{
