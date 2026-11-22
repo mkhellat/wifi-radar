@@ -16,8 +16,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use wifi_radar_core::{
     fuse_hybrid_bearing_range_2d, fuse_multilateration_2d, fuse_multilateration_2d_robust,
-    fuse_weighted_centroids, read_observation, write_observation, FuseStatus, FusedPosition2D,
-    NodeObservation, DEFAULT_FUSION_WINDOW_SEC, DEFAULT_TUKEY_DELTA_M,
+    fuse_weighted_centroids, read_observation, read_observations_from_ws_server, write_observation,
+    FuseStatus, FusedPosition2D, NodeObservation, DEFAULT_FUSION_WINDOW_SEC, DEFAULT_TUKEY_DELTA_M,
 };
 
 /// Which 2D solver to run over an associated epoch.
@@ -274,16 +274,49 @@ where
 pub fn listen_fuse_epochs_on<F>(
     listener: TcpListener,
     cfg: EpochListenConfig,
-    mut emit: F,
+    emit: F,
 ) -> Result<usize, String>
 where
     F: FnMut(&[FusedTrack]) -> Result<(), String>,
 {
+    let (tx, rx) = mpsc::channel::<Result<NodeObservation, String>>();
+    spawn_observation_accept(listener, tx, ObservationIngress::Tcp);
+    drive_idle_epochs(rx, cfg, emit)
+}
+
+/// Accept many WebSocket clients; on idle, fuse buffered observations and call `emit`.
+///
+/// Same epoch rules as [`listen_fuse_epochs_on`]. Each client speaks plaintext
+/// `ws://` and sends one NDJSON [`NodeObservation`] per text frame, then closes.
+/// Binary frames fail the listen. There is no TLS.
+pub fn listen_fuse_epochs_ws_on<F>(
+    listener: TcpListener,
+    cfg: EpochListenConfig,
+    emit: F,
+) -> Result<usize, String>
+where
+    F: FnMut(&[FusedTrack]) -> Result<(), String>,
+{
+    let (tx, rx) = mpsc::channel::<Result<NodeObservation, String>>();
+    spawn_observation_accept(listener, tx, ObservationIngress::WebSocket);
+    drive_idle_epochs(rx, cfg, emit)
+}
+
+#[derive(Clone, Copy)]
+enum ObservationIngress {
+    Tcp,
+    WebSocket,
+}
+
+fn spawn_observation_accept(
+    listener: TcpListener,
+    tx: mpsc::Sender<Result<NodeObservation, String>>,
+    ingress: ObservationIngress,
+) {
     let local = listener
         .local_addr()
         .map(|a| a.to_string())
         .unwrap_or_else(|_| "?".into());
-    let (tx, rx) = mpsc::channel::<Result<NodeObservation, String>>();
     thread::spawn(move || {
         for conn in listener.incoming() {
             match conn {
@@ -292,7 +325,14 @@ where
                         .peer_addr()
                         .map(|a| a.to_string())
                         .unwrap_or_else(|_| "?".into());
-                    match read_observations_until_eof(stream) {
+                    let read = match ingress {
+                        ObservationIngress::Tcp => read_observations_until_eof(stream),
+                        ObservationIngress::WebSocket => {
+                            let _ = stream.set_nodelay(true);
+                            read_observations_from_ws_server(stream)
+                        }
+                    };
+                    match read {
                         Ok(batches) => {
                             for obs in batches {
                                 if tx.send(Ok(obs)).is_err() {
@@ -312,7 +352,17 @@ where
             }
         }
     });
+}
 
+/// Fuse observations from `rx` after `cfg.idle` of silence.
+fn drive_idle_epochs<F>(
+    rx: mpsc::Receiver<Result<NodeObservation, String>>,
+    cfg: EpochListenConfig,
+    mut emit: F,
+) -> Result<usize, String>
+where
+    F: FnMut(&[FusedTrack]) -> Result<(), String>,
+{
     let mut batches: Vec<NodeObservation> = Vec::new();
     let mut epochs = 0usize;
     loop {
@@ -475,6 +525,79 @@ mod tests {
             write_observation(&mut client, obs).unwrap();
             drop(client);
             thread::sleep(Duration::from_millis(20));
+        }
+        let epochs = server.join().unwrap().unwrap();
+        assert_eq!(epochs, 1);
+        let tracks = collected.lock().unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert!((tracks[0].x - 2.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn oneshot_ws_fuses_three_frames_on_one_client() {
+        use std::thread;
+        use std::time::Duration;
+        use wifi_radar_core::write_observations_ws_client;
+
+        let paths = [
+            fixture("three_node_lab_node_a.json"),
+            fixture("three_node_lab_node_b.json"),
+            fixture("three_node_lab_node_c.json"),
+        ];
+        let refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+        let batches = load_observation_files(&refs).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let got = read_observations_from_ws_server(stream).unwrap();
+            fuse_batches(&got, DEFAULT_FUSION_WINDOW_SEC, SolverKind::Multilateration)
+        });
+        thread::sleep(Duration::from_millis(30));
+        write_observations_ws_client(&addr.to_string(), &batches).unwrap();
+        let tracks = server.join().unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert!((tracks[0].x - 2.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn continuous_ws_listen_fuses_after_idle_across_clients() {
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+        use std::time::Duration;
+        use wifi_radar_core::write_observation_ws_client;
+
+        let paths = [
+            fixture("three_node_lab_node_a.json"),
+            fixture("three_node_lab_node_b.json"),
+            fixture("three_node_lab_node_c.json"),
+        ];
+        let batches: Vec<NodeObservation> = paths
+            .iter()
+            .map(|p| load_observation_file(p).unwrap())
+            .collect();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let collected: Arc<Mutex<Vec<FusedTrack>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_bg = Arc::clone(&collected);
+        let server = thread::spawn(move || {
+            let mut cfg = EpochListenConfig::new(
+                DEFAULT_FUSION_WINDOW_SEC,
+                SolverKind::Multilateration,
+            );
+            cfg.idle = Duration::from_millis(300);
+            cfg.max_epochs = Some(1);
+            listen_fuse_epochs_ws_on(listener, cfg, |tracks| {
+                collected_bg.lock().unwrap().extend(tracks.iter().cloned());
+                Ok(())
+            })
+        });
+        thread::sleep(Duration::from_millis(40));
+        for obs in &batches {
+            write_observation_ws_client(&addr.to_string(), obs).unwrap();
+            thread::sleep(Duration::from_millis(40));
         }
         let epochs = server.join().unwrap().unwrap();
         assert_eq!(epochs, 1);
