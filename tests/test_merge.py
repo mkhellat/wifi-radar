@@ -67,3 +67,33 @@ def test_snapshot_sorted_by_rssi() -> None:
     snap = store.snapshot()
     assert snap[0].mac == "aa:bb:cc:dd:ee:02"
     assert snap[-1].mac == "aa:bb:cc:dd:ee:01"
+
+
+def test_get_normalizes_and_missing() -> None:
+    store = DeviceStore()
+    store.merge([_make_dev()])
+    assert store.get("AA-BB-CC-DD-EE-FF") is not None
+    assert store.get("00:00:00:00:00:99") is None
+
+
+def test_set_and_clear_bearing_write_through() -> None:
+    store = DeviceStore()
+    store.merge([_make_dev()])
+    store.set_bearing("AA:BB:CC:DD:EE:FF", 90.0, confidence=0.5, manual=True)
+    dev = store.get("aa:bb:cc:dd:ee:ff")
+    assert dev is not None
+    assert dev.bearing_deg == 90.0
+    assert dev.bearing_manual is True
+    assert dev.bearing_confidence == 0.5
+    store.clear_bearing("aa:bb:cc:dd:ee:ff")
+    dev = store.get("aa:bb:cc:dd:ee:ff")
+    assert dev is not None
+    assert dev.bearing_deg is None
+    assert dev.bearing_manual is False
+    assert dev.bearing_confidence == 0.0
+
+
+def test_set_bearing_unknown_mac_is_noop() -> None:
+    store = DeviceStore()
+    store.set_bearing("00:00:00:00:00:99", 10.0)  # no device, must not raise
+    assert store.get("00:00:00:00:00:99") is None
