@@ -5,8 +5,10 @@ files, associates them in a wall-clock window, and prints fused 2D tracks as
 NDJSON.
 
 Best-effort RF localization only — **not** survey-grade; **not** a product 3D
-claim. Pair with `wifi-radar-node` (`--publish` / `--interval`) for live
-observation ingest.
+claim. Pair with `wifi-radar-node` for live observation ingest. `--publish`
+feeds `--listen` (TCP NDJSON). `--publish-ws` feeds `--listen-ws` (plaintext
+`ws://`, one NDJSON text frame per observation, then close). The JSON object
+is the same on both pipes. There is no TLS.
 
 ```bash
 cargo run -p wifi-radar-fuse -- --solver mlat \
@@ -16,6 +18,8 @@ cargo run -p wifi-radar-fuse -- --solver mlat \
 
 # Continuous TCP (default): accept many clients; fuse after idle silence.
 cargo run -p wifi-radar-fuse -- --listen 127.0.0.1:9800 --solver mlat
+# Same epoch loop on plaintext WebSocket text frames.
+cargo run -p wifi-radar-fuse -- --listen-ws 127.0.0.1:9801 --solver mlat
 # Optional: --idle-ms 500  (silence before an epoch fuse)
 # Optional: --oneshot      (accept one client, fuse once, exit)
 
