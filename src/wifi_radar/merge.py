@@ -32,6 +32,33 @@ class DeviceStore:
     def devices(self) -> dict[str, WifiDevice]:
         return self._devices
 
+    def get(self, mac: str) -> WifiDevice | None:
+        """Return the live device for ``mac`` (normalized), or ``None``."""
+        return self._devices.get(normalize_mac(mac))
+
+    def set_bearing(
+        self,
+        mac: str,
+        bearing_deg: float | None,
+        *,
+        confidence: float = 1.0,
+        manual: bool = False,
+    ) -> None:
+        """Write a bearing onto the live device (``None`` clears it).
+
+        Shared write-through surface with the native store so the curses UI
+        does not mutate ``store.devices[mac]`` directly.
+        """
+        dev = self._devices.get(normalize_mac(mac))
+        if dev is not None:
+            dev.bearing_deg = bearing_deg
+            dev.bearing_confidence = confidence
+            dev.bearing_manual = manual
+
+    def clear_bearing(self, mac: str) -> None:
+        """Drop any calibrated/manual bearing on the live device."""
+        self.set_bearing(mac, None, confidence=0.0, manual=False)
+
     def merge(self, incoming: list[WifiDevice]) -> None:
         """Merge a batch of scanned devices into the store."""
         now = time.time()
