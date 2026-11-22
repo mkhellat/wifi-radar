@@ -13,14 +13,14 @@ pub mod nl80211;
 mod proc;
 pub mod tshark;
 
-pub use airodump::{parse_airodump_csv, parse_airodump_file};
+pub use airodump::{parse_airodump_csv, parse_airodump_file, sample_airodump, AIRODUMP_SAMPLE};
 pub use bss::{device_from_bss_attrs, devices_from_nl80211_attrs, RawAttr};
 pub use iw::IwCliBackend;
 pub use monitor::{is_root, MonitorSession};
 pub use nl80211::{
     trigger_scan, trigger_scan_and_wait, Nl80211Backend, ScanWaitKind, DEFAULT_TRIGGER_WAIT,
 };
-pub use tshark::parse_tshark_probes;
+pub use tshark::{parse_tshark_probes, sample_tshark_probes, TSHARK_SAMPLE};
 
 use wifi_radar_core::VERSION as CORE_VERSION;
 

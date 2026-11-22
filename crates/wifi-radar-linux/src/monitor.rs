@@ -40,7 +40,7 @@ fn parse_effective_uid(status: &str) -> Option<u32> {
 
 /// Interface names are passed as argv (never through a shell), but still
 /// reject anything the kernel would not accept or that looks like an option.
-fn valid_iface_name(name: &str) -> bool {
+pub(crate) fn valid_iface_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 15
         && !name.starts_with('-')
