@@ -42,7 +42,7 @@ pub fn help_lines(selected: bool, mode: CalibrationMode) -> Vec<String> {
         "GLOBAL ACTIONS".into(),
         "  q              Quit".into(),
         "  r              Force immediate rescan".into(),
-        "  m              Toggle monitor flag (airodump not wired yet)".into(),
+        "  m              Toggle passive monitor (airodump + tshark)".into(),
         "  c              Start/stop rotation bearing calibration".into(),
         "  ?              Show this help screen".into(),
         String::new(),
@@ -72,6 +72,9 @@ pub fn help_lines(selected: bool, mode: CalibrationMode) -> Vec<String> {
         "  Rotation calibration needs visible RSSI variation.".into(),
         "  Manual pin and distance cal persist across runs.".into(),
         "  Use x or :clear when a calibrated device has moved.".into(),
+        "  Monitor capture is passive (no injection or deauth).".into(),
+        "  It needs root and airodump-ng. tshark is optional.".into(),
+        "  Without root, scans stay on nl80211 / iw.".into(),
         String::new(),
         "Press any key to return to radar".into(),
     ]);
@@ -90,6 +93,10 @@ mod tests {
         assert!(joined.contains("selected device: no"));
         assert!(joined.contains("Press any key"));
         assert!(joined.contains(":mode anchor"));
+        assert!(joined.contains("airodump"));
+        assert!(joined.contains("passive"));
+        assert!(!joined.contains("not wired"));
+        assert!(!joined.contains("flag only"));
     }
 
     #[test]
