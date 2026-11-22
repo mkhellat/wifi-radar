@@ -32,7 +32,10 @@ otherwise it dumps the existing cache.
 
 **DeviceStore** semantics (EMA α=0.25, TTL 30 s, strongest-first snapshot)
 are shared in intent: Rust ``wifi-radar-core`` for Ratatui/PyO3; Python
-``merge.py`` for the curses app until the façade is wired end-to-end.
+``merge.py`` for the curses app. When ``wifi_radar_native`` is installed the
+curses app now prefers the Rust store too (see the DeviceStore bridge note
+below), so ``merge.py`` is the fallback rather than a separate permanent
+implementation.
 
 Python package layout
 ---------------------
@@ -124,8 +127,22 @@ Key design decisions
   calibration mode. When ``wifi_radar_native`` is installed and
   ``native_scene_ready()`` is true (native ``CalibrationStore`` plus
   ``apply_scene_corrections``), the curses path prefers the Rust engine via
-  dict round-trip; otherwise the pure-Python implementation runs. EMA merge
-  in ``DeviceStore`` remains Python for now.
+  dict round-trip; otherwise the pure-Python implementation runs.
+
+**DeviceStore bridge (native EMA merge for curses).**
+  ``wifi_radar.store_bridge`` mirrors the calibration bridge.
+  ``make_device_store()`` returns a ``NativeDeviceStore`` when
+  ``native_store_ready()`` is true (the native ``DeviceStore`` exposes
+  ``merge``/``get``/``set_bearing``/``snapshot``/``expire``); otherwise it
+  returns the pure-Python ``merge.py`` store. The native store runs EMA
+  RSSI merge (α=0.25) and TTL expiry in ``wifi-radar-core`` over
+  worker-scan dict batches and keeps a MAC→\ ``WifiDevice`` cache refreshed
+  after each merge. Per-MAC calibration overlay (rssi-at-1m, manual
+  bearing) still runs in Python inside ``snapshot()`` so ordering and
+  semantics match the pure-Python store. The curses UI edits bearings only
+  through the shared ``get`` / ``set_bearing`` / ``clear_bearing``
+  write-through surface, so pins, clears, and rotation bearings reach the
+  Rust store instead of mutating a transient snapshot copy.
 
 **Heading rotates the plot.**
   Device bearings are rendered as ``bearing - heading``, so "forward" (the
