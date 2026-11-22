@@ -12,8 +12,8 @@ radar) until Ratatui reaches feature parity.
 
    crates/
      wifi-radar-core/     Models, DeviceStore, ScanBackend trait
-     wifi-radar-linux/    Nl80211Backend (GET_SCAN dump) + IwCliBackend fallback
-     wifi-radar-tui/      Ratatui list MVP (--demo / -i; nl80211 then iw)
+     wifi-radar-linux/    Nl80211Backend + IwCliBackend; passive {phy}mon
+     wifi-radar-tui/      Ratatui polar (--demo / -i; nl80211, then monitor)
      wifi-radar-py/       PyO3 module wifi_radar_native (maturin)
 
    src/wifi_radar/        Shipping Python app (curses + iw/airodump/tshark)
@@ -92,13 +92,15 @@ Rust MVP data flow
 
 .. code-block:: text
 
-   demo ──────────────────────────────┐
-   Nl80211Backend (GET_SCAN dump) ────┼──▶ DeviceStore (core) ──▶ snapshot()
-   IwCliBackend (fallback on error) ──┘              │
-                    ┌────────────────────────────────┼───────────────┐
-                    ▼                                ▼               ▼
-             wifi-radar-tui                   wifi_radar_native
-             (Ratatui list)                   (PyO3 dict rows)
+   demo ─────────────────────────────────┐
+   Nl80211Backend (GET_SCAN dump) ───────┤
+   IwCliBackend (fallback on error) ─────┼──▶ DeviceStore (core) ──▶ snapshot()
+   airodump + tshark on {phy}mon ────────┘
+     passive; Ratatui only when monitor is on and euid is 0
+                    ┌──────────────────────────────────────────────┐
+                    ▼                                              ▼
+             wifi-radar-tui                                 wifi_radar_native
+             (Ratatui polar)                                (PyO3 dict rows)
 
 Key design decisions
 --------------------
@@ -107,9 +109,12 @@ Key design decisions
   All scanning runs in the worker thread. The UI reads a snapshot of the
   device store every ~200 ms via ``store.snapshot()``.
 
-**Ratatui MVP scans on the UI thread for now.**
-  The list MVP calls ``ScanBackend::scan`` on an interval inside the event
-  loop. A dedicated worker (parity with Python) lands with polar UI work.
+**Ratatui scans on the UI thread.**
+  ``maybe_scan`` calls nl80211, then ``iw`` if that errors, inside the
+  event loop. When monitor mode is on and the process is root, the same
+  pass ensures ``{phy}mon`` and runs a passive airodump-ng sample plus
+  tshark when ``tshark`` is on ``PATH``. That blocks the UI for the
+  sample. The background worker remains the Python app's.
 
 **Selection by MAC, not list index.**
   When RSSI changes cause re-sorting, the selected device stays selected
