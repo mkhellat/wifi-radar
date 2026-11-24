@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! wifi-radar-fuse — fuse observation JSON files, TCP, or WebSocket streams.
 
 use std::env;
