@@ -45,7 +45,7 @@ pub fn help_lines(selected: bool, mode: CalibrationMode) -> Vec<String> {
         "GLOBAL ACTIONS".into(),
         "  q              Quit".into(),
         "  r              Force immediate rescan".into(),
-        "  m              Toggle passive monitor (airodump + tshark)".into(),
+        "  m              Toggle passive monitor (background sample)".into(),
         "  c              Start/stop rotation bearing calibration".into(),
         "  ?              Show this help screen".into(),
         String::new(),
@@ -76,8 +76,10 @@ pub fn help_lines(selected: bool, mode: CalibrationMode) -> Vec<String> {
         "  Manual pin and distance cal persist across runs.".into(),
         "  Use x or :clear when a calibrated device has moved.".into(),
         "  Monitor capture is passive (no injection or deauth).".into(),
+        "  It runs in the background, so the radar stays responsive.".into(),
         "  It needs root and airodump-ng. tshark is optional.".into(),
         "  Without root, scans stay on nl80211 / iw.".into(),
+        "  The header shows mon=sampling while a sample runs.".into(),
         String::new(),
         "Press any key to return to radar".into(),
     ]);
@@ -98,8 +100,14 @@ mod tests {
         assert!(joined.contains(":mode anchor"));
         assert!(joined.contains("airodump"));
         assert!(joined.contains("passive"));
+        assert!(joined.contains("background"));
+        assert!(joined.contains("responsive"));
+        assert!(joined.contains("tshark"));
+        assert!(joined.contains("root"));
         assert!(!joined.contains("not wired"));
         assert!(!joined.contains("flag only"));
+        assert!(!joined.contains("blocks"));
+        assert!(!joined.contains("freeze"));
     }
 
     #[test]

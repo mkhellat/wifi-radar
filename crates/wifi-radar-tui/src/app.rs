@@ -273,7 +273,7 @@ impl App {
         } else if !is_root() {
             "Monitor ON needs root — scans stay on nl80211/iw".into()
         } else {
-            "Monitor ON — passive airodump/tshark on next scan".into()
+            "Monitor ON — background airodump/tshark on the next scan".into()
         };
     }
 
@@ -407,6 +407,21 @@ impl App {
     /// Rotate heading by `delta_deg` (normalized to \[0, 360)).
     pub fn rotate_heading(&mut self, delta_deg: f64) {
         self.heading_deg = (self.heading_deg + delta_deg).rem_euclid(360.0);
+    }
+
+    /// Header token for passive monitor: `off`, `on`, or `sampling`.
+    ///
+    /// `sampling` is only shown while monitor mode is still on and a
+    /// background sample has not finished. Turning monitor off clears it
+    /// even if the worker has not exited yet, because that batch is dropped.
+    pub fn monitor_label(&self) -> &'static str {
+        if self.mon_enabled && self.monitor_sampling() {
+            "sampling"
+        } else if self.mon_enabled {
+            "on"
+        } else {
+            "off"
+        }
     }
 
     /// Header label for the active / preferred backend.
@@ -976,6 +991,37 @@ mod tests {
         assert!(!app.status.contains("sampling"));
         assert!(!app.monitor_sampling());
         assert!(!app.monitor.created());
+    }
+
+    #[test]
+    fn monitor_label_is_sampling_only_while_enabled_and_in_flight() {
+        let entered = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let entered_c = Arc::clone(&entered);
+        let release_c = Arc::clone(&release);
+        let mut app = App::new("wlan0".into(), false);
+        app.install_test_sampler(Arc::new(move || {
+            entered_c.store(true, Ordering::SeqCst);
+            let start = Instant::now();
+            while !release_c.load(Ordering::SeqCst) {
+                if start.elapsed() > Duration::from_secs(5) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            (Vec::new(), "scripted".into())
+        }));
+        assert_eq!(app.monitor_label(), "off");
+        app.mon_enabled = true;
+        assert_eq!(app.monitor_label(), "on");
+        assert!(app.spawn_monitor_sample());
+        while !entered.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(app.monitor_label(), "sampling");
+        app.toggle_monitor();
+        assert_eq!(app.monitor_label(), "off");
+        release.store(true, Ordering::SeqCst);
     }
 
     #[test]
