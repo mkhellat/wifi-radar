@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wifi-radar contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Parse `iw dev <iface> scan` output for AP discovery."""
 
 from __future__ import annotations

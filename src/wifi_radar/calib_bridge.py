@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wifi-radar contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Prefer Rust ``CalibrationStore`` when ``wifi_radar_native`` is available.
 
 Keeps the same method surface as :class:`wifi_radar.calibration.CalibrationStore`

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wifi-radar contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Scene-wide correction models built on top of per-MAC calibration."""
 
 from __future__ import annotations
