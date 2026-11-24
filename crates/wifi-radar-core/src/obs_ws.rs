@@ -5,8 +5,9 @@
 //!
 //! One NDJSON record per text frame: the same compact JSON line
 //! [`crate::write_observation`] writes on TCP, including the trailing
-//! newline. Binary frames are rejected. There is no TLS and no auth;
-//! this is a lab pipe beside the TCP listener, not a public endpoint.
+//! newline. Binary frames are rejected. There is no auth. This module
+//! stays plaintext; optional TLS is [`crate::obs_wss`]. Lab use only,
+//! not a public endpoint.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -17,7 +18,7 @@ use tungstenite::{Message, WebSocket};
 use crate::node_obs::NodeObservation;
 
 /// How long a client waits on the handshake and the close reply.
-const CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Compact NDJSON line for one observation (JSON + `\n`).
 ///
@@ -99,6 +100,38 @@ pub fn write_observations_ws_client(addr: &str, batches: &[NodeObservation]) -> 
         return Err("no observations to send".into());
     }
     let url = ws_url(addr)?;
+    let stream = connect_client_tcp(addr)?;
+    write_observations_on_ws_client(stream, &url, batches)
+}
+
+/// Handshake and send on an already-connected stream.
+///
+/// `url` is `ws://HOST:PORT` or `wss://HOST:PORT`. The caller owns TLS:
+/// a plaintext [`TcpStream`] or a rustls stream both implement
+/// [`Read`] + [`Write`]. Binary frames are still rejected by the peer's
+/// reader, not by this send path.
+pub(crate) fn write_observations_on_ws_client<S>(
+    stream: S,
+    url: &str,
+    batches: &[NodeObservation],
+) -> Result<(), String>
+where
+    S: Read + Write,
+{
+    if batches.is_empty() {
+        return Err("no observations to send".into());
+    }
+    let (mut ws, _response) =
+        tungstenite::client(url, stream).map_err(|e| format!("websocket handshake {url}: {e}"))?;
+    for obs in batches {
+        let payload = observation_frame_text(obs)?;
+        ws.send(Message::text(payload))
+            .map_err(|e| format!("websocket send: {e}"))?;
+    }
+    finish_client_close(&mut ws)
+}
+
+pub(crate) fn connect_client_tcp(addr: &str) -> Result<TcpStream, String> {
     let stream = TcpStream::connect(addr).map_err(|e| format!("connect {addr}: {e}"))?;
     stream
         .set_nodelay(true)
@@ -109,17 +142,10 @@ pub fn write_observations_ws_client(addr: &str, batches: &[NodeObservation]) -> 
     stream
         .set_write_timeout(Some(CLIENT_IO_TIMEOUT))
         .map_err(|e| format!("write timeout {addr}: {e}"))?;
-    let (mut ws, _response) = tungstenite::client(url.as_str(), stream)
-        .map_err(|e| format!("websocket handshake {url}: {e}"))?;
-    for obs in batches {
-        let payload = observation_frame_text(obs)?;
-        ws.send(Message::text(payload))
-            .map_err(|e| format!("websocket send: {e}"))?;
-    }
-    finish_client_close(&mut ws)
+    Ok(stream)
 }
 
-fn ws_url(addr: &str) -> Result<String, String> {
+pub(crate) fn require_host_port(addr: &str) -> Result<(), String> {
     if addr.is_empty() || addr.contains("://") || addr.contains('/') {
         return Err(format!("WebSocket address must be HOST:PORT (got {addr})"));
     }
@@ -129,6 +155,11 @@ fn ws_url(addr: &str) -> Result<String, String> {
     {
         return Err(format!("WebSocket address must be HOST:PORT (got {addr})"));
     }
+    Ok(())
+}
+
+fn ws_url(addr: &str) -> Result<String, String> {
+    require_host_port(addr)?;
     Ok(format!("ws://{addr}"))
 }
 

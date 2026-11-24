@@ -15,6 +15,7 @@ pub mod models;
 pub mod node_obs;
 pub mod obs_transport;
 pub mod obs_ws;
+pub mod obs_wss;
 pub mod scan;
 pub mod store;
 pub mod util;
@@ -43,6 +44,10 @@ pub use obs_transport::{read_observation, read_observation_tcp, write_observatio
 pub use obs_ws::{
     observation_frame_text, observation_from_ws_text, read_observations_from_ws_server,
     write_observation_ws_client, write_observations_ws_client,
+};
+pub use obs_wss::{
+    read_observations_from_wss_server, write_observation_wss_client, write_observations_wss_client,
+    WssClientConfig, WssServerConfig,
 };
 pub use scan::{ScanBackend, ScanError};
 pub use store::{DeviceStore, DEFAULT_TTL_SEC, RSSI_EMA_ALPHA};
