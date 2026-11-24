@@ -64,7 +64,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
             app.iface,
             app.backend_label(),
             app.heading_deg,
-            if app.mon_enabled { "on" } else { "off" },
+            app.monitor_label(),
             if app.bearing_calibrator.active() {
                 "  CALIB"
             } else {
