@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Multi-node observation association and 2D fusion helpers.
 //!
 //! Passive best-effort RF localization only — not survey-grade. Public docs

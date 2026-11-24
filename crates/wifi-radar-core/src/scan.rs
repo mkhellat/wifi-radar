@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Scan backend trait (nl80211 is the long-term target; iw is interim).
 
 use crate::models::WifiDevice;

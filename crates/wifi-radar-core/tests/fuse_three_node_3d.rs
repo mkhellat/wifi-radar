@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 3D go/no-go fixtures: vertical span required for Ok.
 
 use std::fs;
