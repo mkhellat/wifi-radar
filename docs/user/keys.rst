@@ -48,7 +48,11 @@ Actions
    * - ``r``
      - Force immediate rescan (signals the background worker)
    * - ``m``
-     - Toggle monitor-mode sampling on/off
+     - Toggle monitor-mode sampling on/off. Python and the Ratatui UI
+       both take the sample on a background thread (root and
+       ``airodump-ng``; ``tshark`` is optional). The Ratatui header
+       shows ``mon=sampling`` while a capture runs, and the polar view
+       keeps drawing.
    * - ``c``
      - Start/stop bearing calibration
    * - ``x``

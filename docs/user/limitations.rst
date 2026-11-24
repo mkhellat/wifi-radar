@@ -67,7 +67,9 @@ Channel coverage
 - ``iw scan`` performs a managed scan that hops through supported channels.
   This is not instantaneous; quiet devices may be missed.
 - Monitor mode (``airodump-ng``) with ``--band abg`` covers both 2.4 and 5 GHz
-  but brief samples may miss infrequent transmitters.
+  but brief samples may miss infrequent transmitters. On the Ratatui UI
+  that sample runs in the background, so the polar view keeps drawing.
+  It still needs root and ``airodump-ng``; ``tshark`` is optional.
 - Your own machine's traffic dominates when associated on the same channel.
 
 Interface conflicts
