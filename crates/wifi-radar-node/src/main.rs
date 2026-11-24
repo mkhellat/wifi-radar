@@ -10,9 +10,11 @@ use std::time::{Duration, Instant};
 
 use wifi_radar_core::{NodePose, ScanBackend};
 use wifi_radar_linux::{IwCliBackend, Nl80211Backend};
+use wifi_radar_core::WssClientConfig;
 use wifi_radar_node::{
-    demo_devices, observation_from_devices, observation_to_ndjson, publish_observation,
-    publish_observation_ws, run_observation_loop, scan_once, LoopConfig, NodeConfig,
+    demo_devices, observation_from_devices, observation_to_ndjson, parse_publish_wss_target,
+    publish_observation, publish_observation_ws, publish_observation_wss, run_observation_loop,
+    scan_once, LoopConfig, NodeConfig,
 };
 
 fn usage() -> ! {
@@ -26,12 +28,19 @@ fn usage() -> ! {
            --pretty              Pretty-print JSON instead of NDJSON (stdout)\n\
            --publish HOST:PORT   Send NDJSON to a wifi-radar-fuse --listen peer\n\
            --publish-ws HOST:PORT  Send one NDJSON text frame to --listen-ws\n\
+           --publish-wss TARGET  Send one NDJSON text frame to --listen-wss\n\
+           --tls-ca PEM          Trust anchor for --publish-wss (self-signed\n\
+                                 server cert is fine for a lab)\n\
            --interval SEC        Repeat scan every SEC seconds (default: once)\n\
            --count N             Stop after N iterations (requires --interval)\n\
          \n\
-         Default: scan once; write to stdout unless --publish or\n\
-         --publish-ws is set. With --interval, loop until --count or forever.\n\
+         TARGET is HOST:PORT or wss://HOST:PORT. The TLS name is the host.\n\
+         Default: scan once; write to stdout unless --publish,\n\
+         --publish-ws, or --publish-wss is set. With --interval, loop until\n\
+         --count or forever.\n\
          --publish-ws is plaintext ws:// (one text frame, then close).\n\
+         --publish-wss is the same text frame over TLS. Plaintext stays\n\
+         the lab default.\n\
          Passive observation only — not survey-grade localization."
     );
     process::exit(2);
@@ -89,6 +98,11 @@ enum Sink {
     Stdout { pretty: bool },
     Tcp(String),
     Ws(String),
+    Wss {
+        addr: String,
+        server_name: String,
+        tls: WssClientConfig,
+    },
 }
 
 fn emit_observation(
@@ -108,6 +122,18 @@ fn emit_observation(
             publish_observation_ws(addr, obs)?;
             eprintln!(
                 "wifi-radar-node: published {} device(s) as {} via websocket to {addr}",
+                obs.device_observations.len(),
+                obs.node_id
+            );
+        }
+        Sink::Wss {
+            addr,
+            server_name,
+            tls,
+        } => {
+            publish_observation_wss(addr, server_name, tls, obs)?;
+            eprintln!(
+                "wifi-radar-node: published {} device(s) as {} via wss to {addr} ({server_name})",
                 obs.device_observations.len(),
                 obs.node_id
             );
@@ -140,6 +166,8 @@ fn run() -> Result<(), String> {
     let mut pretty = false;
     let mut publish: Option<String> = None;
     let mut publish_ws: Option<String> = None;
+    let mut publish_wss: Option<String> = None;
+    let mut tls_ca: Option<String> = None;
     let mut interval: Option<f64> = None;
     let mut count: Option<usize> = None;
     let mut i = 0;
@@ -167,6 +195,18 @@ fn run() -> Result<(), String> {
             "--publish-ws" => {
                 i += 1;
                 publish_ws = Some(args.get(i).ok_or("--publish-ws needs HOST:PORT")?.clone());
+            }
+            "--publish-wss" => {
+                i += 1;
+                publish_wss = Some(
+                    args.get(i)
+                        .ok_or("--publish-wss needs HOST:PORT or wss://HOST:PORT")?
+                        .clone(),
+                );
+            }
+            "--tls-ca" => {
+                i += 1;
+                tls_ca = Some(args.get(i).ok_or("--tls-ca needs a PEM path")?.clone());
             }
             "--interval" => {
                 i += 1;
@@ -196,14 +236,23 @@ fn run() -> Result<(), String> {
         i += 1;
     }
 
-    if publish.is_some() && publish_ws.is_some() {
-        return Err("--publish and --publish-ws cannot be combined".into());
+    let publish_count = usize::from(publish.is_some())
+        + usize::from(publish_ws.is_some())
+        + usize::from(publish_wss.is_some());
+    if publish_count > 1 {
+        return Err("--publish, --publish-ws, and --publish-wss cannot be combined".into());
+    }
+    if publish_wss.is_none() && tls_ca.is_some() {
+        return Err("--tls-ca requires --publish-wss".into());
     }
     if pretty && publish.is_some() {
         return Err("--pretty cannot be combined with --publish".into());
     }
     if pretty && publish_ws.is_some() {
         return Err("--pretty cannot be combined with --publish-ws".into());
+    }
+    if pretty && publish_wss.is_some() {
+        return Err("--pretty cannot be combined with --publish-wss".into());
     }
     if count.is_some() && interval.is_none() {
         return Err("--count requires --interval".into());
@@ -213,6 +262,15 @@ fn run() -> Result<(), String> {
         Sink::Tcp(addr)
     } else if let Some(addr) = publish_ws {
         Sink::Ws(addr)
+    } else if let Some(raw) = publish_wss {
+        let (addr, server_name) = parse_publish_wss_target(&raw)?;
+        let ca = tls_ca.ok_or("--publish-wss needs --tls-ca PEM")?;
+        let tls = WssClientConfig::from_ca_file(std::path::Path::new(&ca))?;
+        Sink::Wss {
+            addr,
+            server_name,
+            tls,
+        }
     } else {
         Sink::Stdout { pretty }
     };
