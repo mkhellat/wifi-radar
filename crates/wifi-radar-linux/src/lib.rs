@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Linux RF backends for wifi-radar.
 //!
 //! Native nl80211 is the intended scan path. [`IwCliBackend`] is the interim

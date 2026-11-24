@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Parse tshark probe-request field output (parity with Python
 //! `scan/tshark.py`).
 //!

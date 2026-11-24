@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Passive monitor-mode support (parity with Python `iface.MonitorSession`).
 //!
 //! [`MonitorSession`] owns a `{phy}mon` virtual interface created next to the
