@@ -43,3 +43,38 @@ jobs:
 
       - name: Cargo test
         run: cargo test --workspace
+
+  native-pyo3:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # maturin develop installs into VIRTUAL_ENV or a .venv. The
+      # setup-python interpreter is not a virtualenv, so this job
+      # creates one and puts it on PATH for the later steps.
+      - name: Create virtualenv
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$GITHUB_WORKSPACE/.venv" >> "$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Install Python package and maturin
+        run: python -m pip install -e ".[dev]" "maturin>=1.7,<2.0"
+
+      - name: Build wifi_radar_native
+        working-directory: crates/wifi-radar-py
+        run: maturin develop --features extension-module
+
+      - name: Assert native extension is importable
+        run: python -c "from wifi_radar import native_available; assert native_available()"
+
+      - name: Pytest
+        run: pytest -v
