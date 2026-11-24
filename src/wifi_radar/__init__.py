@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wifi-radar contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Interactive WiFi surroundings radar (Linux / nl80211)."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wifi-radar contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Prefer the Rust ``DeviceStore`` when ``wifi_radar_native`` is available.
 
 Mirrors :mod:`wifi_radar.calib_bridge`: :class:`NativeDeviceStore` keeps the

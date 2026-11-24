@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wifi-radar contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Optional import of the Rust PyO3 façade (`wifi_radar_native`).
 
 The extension is built with maturin from ``crates/wifi-radar-py``. When it is

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wifi-radar contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Core data models for wifi-radar."""
 
 from __future__ import annotations

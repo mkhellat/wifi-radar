@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 wifi-radar contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Curses application loop with vi-style input model."""
 
 from __future__ import annotations
