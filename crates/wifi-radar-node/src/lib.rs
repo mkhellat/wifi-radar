@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Sensing node agent helpers: build and emit [`NodeObservation`] batches.
 //!
 //! Passive observation only — no association, deauth, or injection.
