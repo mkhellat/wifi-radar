@@ -34,8 +34,12 @@ Running checks
    make test
 
 Python checks must pass before submitting Python changes. Rust changes need
-``cargo test --workspace``. CI runs the Python matrix plus a
-``rust-workspace`` job (``cargo test --workspace``).
+``cargo test --workspace``. CI runs the Python matrix (3.11–3.13) and a
+``rust-workspace`` job (``cargo test --workspace``). A third job,
+``native-pyo3``, builds ``wifi_radar_native`` with maturin on Python 3.12
+(``maturin develop --features extension-module`` from
+``crates/wifi-radar-py``) and runs pytest, so the native tests execute
+instead of skipping.
 
 Code style
 ----------
