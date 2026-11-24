@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! PyO3 façade for wifi-radar (`wifi_radar_native`).
 //!
 //! Exposes core version, [`DeviceStore`], [`CalibrationStore`], and scene
