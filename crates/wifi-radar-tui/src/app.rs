@@ -3,6 +3,10 @@
 
 //! Application state for the Ratatui MVP.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex, TryLockError};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use wifi_radar_core::{
@@ -15,6 +19,128 @@ use wifi_radar_linux::{
 };
 
 use crate::polar::ScaleState;
+
+/// One finished passive sample waiting for the UI thread to merge.
+struct MonitorBatch {
+    generation: u64,
+    devices: Vec<WifiDevice>,
+    note: String,
+}
+
+#[cfg(test)]
+type MonitorSampler = Arc<dyn Fn() -> (Vec<WifiDevice>, String) + Send + Sync>;
+
+/// Background airodump/tshark capture. The UI thread only polls.
+///
+/// At most one sample runs. Turning monitor off or shutting down bumps
+/// `generation` so a late batch is dropped instead of merged.
+struct MonitorHub {
+    session: Arc<Mutex<MonitorSession>>,
+    tx: Sender<MonitorBatch>,
+    rx: Receiver<MonitorBatch>,
+    generation: Arc<AtomicU64>,
+    worker: Option<JoinHandle<()>>,
+    #[cfg(test)]
+    sampler: Option<MonitorSampler>,
+}
+
+impl MonitorHub {
+    fn new(iface: impl Into<String>) -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            session: Arc::new(Mutex::new(MonitorSession::new(iface))),
+            tx,
+            rx,
+            generation: Arc::new(AtomicU64::new(0)),
+            worker: None,
+            #[cfg(test)]
+            sampler: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn created(&self) -> bool {
+        self.session
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .created()
+    }
+
+    fn sampling(&self) -> bool {
+        self.worker
+            .as_ref()
+            .is_some_and(|handle| !handle.is_finished())
+    }
+
+    /// Drop queued batches and tear the VIF down. A sample already running
+    /// is left to finish, but its generation no longer matches.
+    fn invalidate(&mut self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        while self.rx.try_recv().is_ok() {}
+        match self.session.try_lock() {
+            Ok(mut session) => session.teardown(),
+            Err(TryLockError::Poisoned(err)) => err.into_inner().teardown(),
+            Err(TryLockError::WouldBlock) => {}
+        }
+    }
+
+    fn reap(&mut self) {
+        let finished = self
+            .worker
+            .as_ref()
+            .is_some_and(|handle| handle.is_finished());
+        if finished {
+            if let Some(handle) = self.worker.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
+    /// Start one sample. False when a sample is already in flight.
+    fn try_spawn(&mut self) -> bool {
+        self.reap();
+        if self.worker.is_some() {
+            return false;
+        }
+        let gen = self.generation.load(Ordering::SeqCst);
+        let session = Arc::clone(&self.session);
+        let generation = Arc::clone(&self.generation);
+        let tx = self.tx.clone();
+        #[cfg(test)]
+        let sampler = self.sampler.clone();
+        self.worker = Some(thread::spawn(move || {
+            let produced = produce_sample(
+                &session,
+                &generation,
+                gen,
+                #[cfg(test)]
+                sampler,
+            );
+            let Some((devices, note)) = produced else {
+                return;
+            };
+            if generation.load(Ordering::SeqCst) != gen {
+                return;
+            }
+            let _ = tx.send(MonitorBatch {
+                generation: gen,
+                devices,
+                note,
+            });
+        }));
+        true
+    }
+
+    fn poll(&mut self) -> Option<MonitorBatch> {
+        let mut found = None;
+        while let Ok(batch) = self.rx.try_recv() {
+            if batch.generation == self.generation.load(Ordering::SeqCst) {
+                found = Some(batch);
+            }
+        }
+        found
+    }
+}
 
 /// How the TUI obtains scan samples.
 pub enum ScanSource {
@@ -58,8 +184,8 @@ pub struct App {
     pub scan_generation: u64,
     /// Passive monitor capture (`m` / `:monitor`). Off until toggled.
     pub mon_enabled: bool,
-    /// `{phy}mon` session. Created only when a rooted live scan asks for it.
-    monitor: MonitorSession,
+    /// Passive `{phy}mon` capture. The worker thread samples; the UI polls.
+    monitor: MonitorHub,
     pub should_quit: bool,
     last_scan: Instant,
     scan_interval: Duration,
@@ -76,7 +202,7 @@ impl App {
                 iw: IwCliBackend::new(iface.clone()),
             }
         };
-        let monitor = MonitorSession::new(iface.clone());
+        let monitor = MonitorHub::new(iface.clone());
         Self {
             store: DeviceStore::new(),
             devices: Vec::new(),
@@ -138,7 +264,7 @@ impl App {
     pub fn toggle_monitor(&mut self) {
         self.mon_enabled = !self.mon_enabled;
         if !self.mon_enabled {
-            self.monitor.teardown();
+            self.monitor.invalidate();
             self.status = "Monitor OFF".into();
             return;
         }
@@ -152,8 +278,11 @@ impl App {
     }
 
     /// Drop the monitor VIF if this process created it. Also runs on drop.
+    ///
+    /// A sample still in flight is not joined. Its batch is discarded.
     pub fn shutdown(&mut self) {
-        self.monitor.teardown();
+        self.mon_enabled = false;
+        self.monitor.invalidate();
     }
 
     /// Show the help overlay (dismiss with any key).
@@ -289,8 +418,16 @@ impl App {
     }
 
     /// Run a scan if the interval elapsed or `force` is set.
+    ///
+    /// nl80211 / `iw` (and demo) stay on this thread. Passive monitor
+    /// capture is only polled here: a finished batch is merged, and a new
+    /// sample is started without waiting for airodump or tshark.
     pub fn maybe_scan(&mut self, force: bool) {
+        let completed = self.poll_monitor_sample();
         if !force && self.last_scan.elapsed() < self.scan_interval {
+            if let Some(note) = completed {
+                self.attach_monitor_note(&note);
+            }
             return;
         }
         self.last_scan = Instant::now();
@@ -313,13 +450,7 @@ impl App {
             Err(e) => Err(e.to_string()),
         };
 
-        let mon = if self.mon_enabled {
-            Some(self.capture_monitor())
-        } else {
-            None
-        };
-        let mon_merged = mon.as_ref().is_some_and(|(_, merged)| *merged);
-        if managed.is_ok() || mon_merged {
+        if managed.is_ok() {
             self.refresh_snapshot();
             self.bearing_calibrator
                 .feed(self.heading_deg, &self.devices, self.scan_generation);
@@ -356,53 +487,92 @@ impl App {
                 self.status = format!("scan error on {}: {e}", self.iface);
             }
         }
-        if let Some((note, _)) = mon {
+        if self.mon_enabled {
+            let (note, _) = self.capture_monitor();
             if !self.bearing_calibrator.active() {
-                self.status = format!("{}  |  {note}", self.status);
+                let show = if self.monitor_sampling() {
+                    note
+                } else if let Some(done) = completed.clone() {
+                    done
+                } else {
+                    note
+                };
+                self.status = format!("{}  |  {show}", self.status);
             }
+        } else if let Some(note) = completed {
+            self.attach_monitor_note(&note);
         }
     }
 
-    /// One passive monitor sample: airodump-ng, then tshark if it is installed.
+    /// True while a passive monitor sample is running off the UI thread.
+    fn monitor_sampling(&self) -> bool {
+        self.monitor.sampling()
+    }
+
+    /// Spawn one background sample. False when one is already in flight.
+    fn spawn_monitor_sample(&mut self) -> bool {
+        self.monitor.try_spawn()
+    }
+
+    #[cfg(test)]
+    fn install_test_sampler(&mut self, sampler: MonitorSampler) {
+        self.monitor.sampler = Some(sampler);
+    }
+
+    /// Merge a finished monitor batch, if one is waiting and still current.
+    fn poll_monitor_sample(&mut self) -> Option<String> {
+        let batch = self.monitor.poll()?;
+        let note = batch.note;
+        if !batch.devices.is_empty() {
+            self.store.merge(batch.devices);
+            self.refresh_snapshot();
+            self.bearing_calibrator
+                .feed(self.heading_deg, &self.devices, self.scan_generation);
+        }
+        if note.is_empty() {
+            None
+        } else {
+            Some(note)
+        }
+    }
+
+    fn attach_monitor_note(&mut self, note: &str) {
+        if self.bearing_calibrator.active() {
+            return;
+        }
+        let base = self.status.split("  |  ").next().unwrap_or("").to_string();
+        self.status = format!("{base}  |  {note}");
+    }
+
+    /// Sync note when monitor capture must not touch a radio.
     ///
-    /// Returns a status note and whether any devices were merged. Demo mode
-    /// and non-root runs do not create a VIF and do not spawn capture tools.
-    fn capture_monitor(&mut self) -> (String, bool) {
+    /// `None` means the caller should spawn the background sample. A test
+    /// sampler also returns `None` so CI can exercise that path without root.
+    fn monitor_fast_path(&self) -> Option<(String, bool)> {
+        #[cfg(test)]
+        if self.monitor.sampler.is_some() {
+            return None;
+        }
         if matches!(self.source, ScanSource::Demo) {
-            return ("monitor skipped (demo)".into(), false);
+            return Some(("monitor skipped (demo)".into(), false));
         }
         if !is_root() {
-            return ("monitor needs root; staying on nl80211/iw".into(), false);
+            return Some(("monitor needs root; staying on nl80211/iw".into(), false));
         }
-        if let Err(e) = self.monitor.ensure() {
-            return (format!("monitor interface failed: {e}"), false);
+        None
+    }
+
+    /// Decide whether this scan should sample the monitor VIF.
+    ///
+    /// Demo mode and non-root runs return immediately and do not spawn.
+    /// A rooted live scan starts (or keeps) one background sample and
+    /// returns without waiting for airodump-ng or tshark.
+    fn capture_monitor(&mut self) -> (String, bool) {
+        if let Some(note) = self.monitor_fast_path() {
+            return note;
         }
-        let mon = self.monitor.mon_iface().to_string();
-        match sample_airodump(&mon, AIRODUMP_SAMPLE) {
-            Err(e) => (format!("monitor error: {e}"), false),
-            Ok((aps, clients)) => {
-                let n_ap = aps.len();
-                let n_cl = clients.len();
-                let mut merged = n_ap + n_cl > 0;
-                self.store.merge(aps);
-                self.store.merge(clients);
-                let (n_ad, extra) = match sample_tshark_probes(&mon, TSHARK_SAMPLE) {
-                    Ok(adapters) => {
-                        let n = adapters.len();
-                        if n > 0 {
-                            merged = true;
-                        }
-                        self.store.merge(adapters);
-                        (n, String::new())
-                    }
-                    Err(e) => (0, format!("; tshark: {e}")),
-                };
-                (
-                    format!("monitor: {n_ap} APs, {n_cl} clients, {n_ad} adapters{extra}"),
-                    merged,
-                )
-            }
-        }
+        let _started = self.spawn_monitor_sample();
+        ("monitor sampling…".into(), false)
     }
 
     fn refresh_snapshot(&mut self) {
@@ -511,7 +681,80 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        self.monitor.teardown();
+        self.monitor.invalidate();
+    }
+}
+
+/// Run the test sampler when one is installed; otherwise the live tools.
+fn produce_sample(
+    session: &Mutex<MonitorSession>,
+    generation: &AtomicU64,
+    gen: u64,
+    #[cfg(test)] sampler: Option<MonitorSampler>,
+) -> Option<(Vec<WifiDevice>, String)> {
+    if generation.load(Ordering::SeqCst) != gen {
+        return None;
+    }
+    #[cfg(test)]
+    if let Some(sampler) = sampler {
+        return Some(sampler());
+    }
+    sample_production(session, generation, gen)
+}
+
+/// `ensure` the VIF, then airodump-ng and optional tshark. The session
+/// mutex is not held across the sample, so the UI can tear the VIF down
+/// without waiting out the capture.
+fn sample_production(
+    session: &Mutex<MonitorSession>,
+    generation: &AtomicU64,
+    gen: u64,
+) -> Option<(Vec<WifiDevice>, String)> {
+    if generation.load(Ordering::SeqCst) != gen {
+        return None;
+    }
+    let mon = {
+        let mut guard = session.lock().unwrap_or_else(|err| err.into_inner());
+        if generation.load(Ordering::SeqCst) != gen {
+            guard.teardown();
+            return None;
+        }
+        if let Err(e) = guard.ensure() {
+            return Some((Vec::new(), format!("monitor interface failed: {e}")));
+        }
+        guard.mon_iface().to_string()
+    };
+    if generation.load(Ordering::SeqCst) != gen {
+        session
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .teardown();
+        return None;
+    }
+    Some(sample_passive(&mon))
+}
+
+fn sample_passive(mon: &str) -> (Vec<WifiDevice>, String) {
+    match sample_airodump(mon, AIRODUMP_SAMPLE) {
+        Err(e) => (Vec::new(), format!("monitor error: {e}")),
+        Ok((aps, clients)) => {
+            let n_ap = aps.len();
+            let n_cl = clients.len();
+            let mut devices = aps;
+            devices.extend(clients);
+            let (n_ad, extra) = match sample_tshark_probes(mon, TSHARK_SAMPLE) {
+                Ok(adapters) => {
+                    let n = adapters.len();
+                    devices.extend(adapters);
+                    (n, String::new())
+                }
+                Err(e) => (0, format!("; tshark: {e}")),
+            };
+            (
+                devices,
+                format!("monitor: {n_ap} APs, {n_cl} clients, {n_ad} adapters{extra}"),
+            )
+        }
     }
 }
 
@@ -549,6 +792,10 @@ fn demo_devices() -> Vec<WifiDevice> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+
     use super::*;
 
     #[test]
@@ -715,6 +962,7 @@ mod tests {
         assert!(note.contains("root"));
         assert!(note.contains("nl80211"));
         assert!(!app.monitor.created());
+        assert!(!app.monitor_sampling());
     }
 
     #[test]
@@ -725,6 +973,131 @@ mod tests {
         assert!(app.status.contains("DEMO"));
         assert!(app.status.contains("demo"));
         assert!(!app.status.contains("flag only"));
+        assert!(!app.status.contains("sampling"));
+        assert!(!app.monitor_sampling());
+        assert!(!app.monitor.created());
+    }
+
+    #[test]
+    fn in_flight_monitor_sample_skips_second_spawn() {
+        let entered = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let entered_c = Arc::clone(&entered);
+        let release_c = Arc::clone(&release);
+        let calls_c = Arc::clone(&calls);
+        let mut app = App::new("wlan0".into(), false);
+        app.install_test_sampler(Arc::new(move || {
+            calls_c.fetch_add(1, Ordering::SeqCst);
+            entered_c.store(true, Ordering::SeqCst);
+            let start = Instant::now();
+            while !release_c.load(Ordering::SeqCst) {
+                if start.elapsed() > Duration::from_secs(5) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            (Vec::new(), "scripted".into())
+        }));
+        app.mon_enabled = true;
+        assert!(app.spawn_monitor_sample());
+        while !entered.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.monitor_sampling());
+        assert!(!app.spawn_monitor_sample());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        release.store(true, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn finished_monitor_sample_allows_another_spawn() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_c = Arc::clone(&calls);
+        let mut app = App::new("wlan0".into(), false);
+        app.install_test_sampler(Arc::new(move || {
+            calls_c.fetch_add(1, Ordering::SeqCst);
+            (Vec::new(), "scripted".into())
+        }));
+        app.mon_enabled = true;
+        assert!(app.spawn_monitor_sample());
+        for _ in 0..200 {
+            if calls.load(Ordering::SeqCst) >= 1 && !app.monitor_sampling() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(!app.monitor_sampling());
+        assert!(app.spawn_monitor_sample());
+        for _ in 0..200 {
+            if calls.load(Ordering::SeqCst) >= 2 && !app.monitor_sampling() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn scripted_monitor_sample_merges_on_poll() {
+        let mut app = App::new("wlan0".into(), false);
+        app.install_test_sampler(Arc::new(|| {
+            let device = WifiDevice::hotspot("bb:bb:bb:00:00:09", -50.0);
+            (vec![device], "monitor: 1 APs, 0 clients, 0 adapters".into())
+        }));
+        app.mon_enabled = true;
+        assert!(app.spawn_monitor_sample());
+        app.last_scan = Instant::now();
+        let mut saw = false;
+        for _ in 0..200 {
+            app.maybe_scan(false);
+            if app.devices.iter().any(|d| d.mac == "bb:bb:bb:00:00:09") {
+                saw = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(saw);
+        assert!(app.status.contains("1 APs"));
+        assert!(app.store.device_mut("bb:bb:bb:00:00:09").is_some());
+    }
+
+    #[test]
+    fn late_monitor_sample_after_toggle_off_is_not_merged() {
+        let entered = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let entered_c = Arc::clone(&entered);
+        let release_c = Arc::clone(&release);
+        let mut app = App::new("wlan0".into(), false);
+        app.install_test_sampler(Arc::new(move || {
+            entered_c.store(true, Ordering::SeqCst);
+            let start = Instant::now();
+            while !release_c.load(Ordering::SeqCst) {
+                if start.elapsed() > Duration::from_secs(5) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            let device = WifiDevice::hotspot("cc:cc:cc:00:00:01", -40.0);
+            (vec![device], "monitor: late".into())
+        }));
+        app.mon_enabled = true;
+        assert!(app.spawn_monitor_sample());
+        while !entered.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(5));
+        }
+        app.toggle_monitor();
+        assert!(!app.mon_enabled);
+        release.store(true, Ordering::SeqCst);
+        app.last_scan = Instant::now();
+        for _ in 0..200 {
+            app.maybe_scan(false);
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.store.device_mut("cc:cc:cc:00:00:01").is_none());
+        assert!(app.devices.iter().all(|d| d.mac != "cc:cc:cc:00:00:01"));
+        assert!(!app.status.contains("late"));
     }
 
     #[test]
