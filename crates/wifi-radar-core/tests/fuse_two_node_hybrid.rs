@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Two-node hybrid fixtures: bearings lift the fix off the baseline.
 
 use std::fs;

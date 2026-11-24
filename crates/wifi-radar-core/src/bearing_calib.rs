@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Session rotation calibration (peak-RSSI → bearing while user turns).
 //!
 //! Parity with Python `BearingCalibrator`. Session-only — does not write

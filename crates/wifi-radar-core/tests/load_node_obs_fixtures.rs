@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Replayable multi-node observation fixtures (synthetic lab scene).
 
 use std::fs;

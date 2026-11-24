@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MAC helpers.
 
 /// Normalize a MAC to lowercase colon-separated hex (`aa:bb:cc:dd:ee:ff`).

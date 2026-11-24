@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Device store with EMA RSSI, TTL expiry, and merge (Python DeviceStore parity).
 
 use std::collections::HashMap;

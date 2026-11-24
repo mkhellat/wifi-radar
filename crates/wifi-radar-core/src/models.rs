@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Device models and RSSI ranging (ported from Python semantics).
 
 use std::time::{SystemTime, UNIX_EPOCH};

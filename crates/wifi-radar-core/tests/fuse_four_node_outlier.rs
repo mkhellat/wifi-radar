@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Four-node outlier scene: Tukey-robust mlat beats L2.
 
 use std::fs;

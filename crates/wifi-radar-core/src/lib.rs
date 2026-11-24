@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Domain core for wifi-radar (models, store, scan traits).
 //!
 //! Passive observation only. No deauth, injection, association, or cracking.

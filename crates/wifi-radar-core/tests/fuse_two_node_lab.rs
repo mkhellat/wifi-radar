@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Fusion over the two-node lab fixtures (associate + weighted centroid).
 
 use std::fs;
