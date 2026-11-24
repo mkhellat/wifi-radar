@@ -13,7 +13,7 @@ radar) until Ratatui reaches feature parity.
    crates/
      wifi-radar-core/     Models, DeviceStore, ScanBackend trait
      wifi-radar-linux/    Nl80211Backend + IwCliBackend; passive {phy}mon
-     wifi-radar-tui/      Ratatui polar (--demo / -i; nl80211, then monitor)
+     wifi-radar-tui/      Ratatui polar (--demo / -i; nl80211 on the UI thread, monitor on a worker)
      wifi-radar-py/       PyO3 module wifi_radar_native (maturin)
 
    src/wifi_radar/        Shipping Python app (curses + iw/airodump/tshark)
@@ -92,11 +92,14 @@ Rust MVP data flow
 
 .. code-block:: text
 
-   demo ─────────────────────────────────┐
+   demo ─────────────────────────────────┐  UI thread
    Nl80211Backend (GET_SCAN dump) ───────┤
    IwCliBackend (fallback on error) ─────┼──▶ DeviceStore (core) ──▶ snapshot()
-   airodump + tshark on {phy}mon ────────┘
-     passive; Ratatui only when monitor is on and euid is 0
+                                         │
+   monitor thread (at most one) ─────────┘
+     ensure {phy}mon, then airodump + tshark
+     passive; only when monitor is on and euid is 0
+     UI polls each frame; a late batch after teardown is dropped
                     ┌──────────────────────────────────────────────┐
                     ▼                                              ▼
              wifi-radar-tui                                 wifi_radar_native
@@ -109,12 +112,26 @@ Key design decisions
   All scanning runs in the worker thread. The UI reads a snapshot of the
   device store every ~200 ms via ``store.snapshot()``.
 
-**Ratatui scans on the UI thread.**
+**Ratatui managed scans stay on the UI thread.**
   ``maybe_scan`` calls nl80211, then ``iw`` if that errors, inside the
-  event loop. When monitor mode is on and the process is root, the same
-  pass ensures ``{phy}mon`` and runs a passive airodump-ng sample plus
-  tshark when ``tshark`` is on ``PATH``. That blocks the UI for the
-  sample. The background worker remains the Python app's.
+  event loop. Demo mode does the same with a fixed device list. That
+  managed pass can still pause a frame. It does not wait for airodump
+  or tshark.
+
+**Ratatui monitor capture is a background thread.**
+  When monitor mode is on and the process is root, the scan starts at
+  most one worker. The worker ensures ``{phy}mon``, then runs a passive
+  airodump-ng sample plus tshark when ``tshark`` is on ``PATH``. It does
+  not hold the session mutex across that capture, so the UI can tear the
+  VIF down without waiting out the sample. Each ``maybe_scan`` polls a
+  channel and merges a batch whose generation is still current, then
+  refreshes the snapshot. A second scan while the worker is running does
+  not start another sample. Turning monitor off or quitting bumps the
+  generation, tears the VIF down, and drops a late batch so it is not
+  merged. Demo mode and a non-root process do not spawn; they leave a
+  status note and stay on nl80211 / ``iw``. The header shows
+  ``mon=sampling`` while a sample is in flight. The Python curses app
+  keeps its own worker.
 
 **Selection by MAC, not list index.**
   When RSSI changes cause re-sorting, the selected device stays selected
