@@ -19,8 +19,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use wifi_radar_core::{
     fuse_hybrid_bearing_range_2d, fuse_multilateration_2d, fuse_multilateration_2d_robust,
-    fuse_weighted_centroids, read_observation, read_observations_from_ws_server, write_observation,
-    FuseStatus, FusedPosition2D, NodeObservation, DEFAULT_FUSION_WINDOW_SEC, DEFAULT_TUKEY_DELTA_M,
+    fuse_weighted_centroids, read_observation, read_observations_from_ws_server,
+    read_observations_from_wss_server, write_observation, FuseStatus, FusedPosition2D,
+    NodeObservation, WssServerConfig, DEFAULT_FUSION_WINDOW_SEC, DEFAULT_TUKEY_DELTA_M,
 };
 
 /// Which 2D solver to run over an associated epoch.
@@ -291,7 +292,7 @@ where
 ///
 /// Same epoch rules as [`listen_fuse_epochs_on`]. Each client speaks plaintext
 /// `ws://` and sends one NDJSON [`NodeObservation`] per text frame, then closes.
-/// Binary frames fail the listen. There is no TLS.
+/// Binary frames fail the listen. TLS is [`listen_fuse_epochs_wss_on`].
 pub fn listen_fuse_epochs_ws_on<F>(
     listener: TcpListener,
     cfg: EpochListenConfig,
@@ -305,10 +306,31 @@ where
     drive_idle_epochs(rx, cfg, emit)
 }
 
-#[derive(Clone, Copy)]
+/// Accept many `wss://` clients; on idle, fuse buffered observations and call `emit`.
+///
+/// Same epoch rules and NDJSON text frames as [`listen_fuse_epochs_ws_on`].
+/// `tls` is the server certificate and key. Binary frames fail the listen.
+/// A self-signed certificate is a lab identity; the peer must trust it.
+/// Plaintext `ws://` is unchanged.
+pub fn listen_fuse_epochs_wss_on<F>(
+    listener: TcpListener,
+    tls: WssServerConfig,
+    cfg: EpochListenConfig,
+    emit: F,
+) -> Result<usize, String>
+where
+    F: FnMut(&[FusedTrack]) -> Result<(), String>,
+{
+    let (tx, rx) = mpsc::channel::<Result<NodeObservation, String>>();
+    spawn_observation_accept(listener, tx, ObservationIngress::WebSocketTls(tls));
+    drive_idle_epochs(rx, cfg, emit)
+}
+
+#[derive(Clone)]
 enum ObservationIngress {
     Tcp,
     WebSocket,
+    WebSocketTls(WssServerConfig),
 }
 
 fn spawn_observation_accept(
@@ -328,11 +350,14 @@ fn spawn_observation_accept(
                         .peer_addr()
                         .map(|a| a.to_string())
                         .unwrap_or_else(|_| "?".into());
-                    let read = match ingress {
+                    let read = match &ingress {
                         ObservationIngress::Tcp => read_observations_until_eof(stream),
                         ObservationIngress::WebSocket => {
                             let _ = stream.set_nodelay(true);
                             read_observations_from_ws_server(stream)
+                        }
+                        ObservationIngress::WebSocketTls(config) => {
+                            read_observations_from_wss_server(stream, config)
                         }
                     };
                     match read {
@@ -603,6 +628,78 @@ mod tests {
             thread::sleep(Duration::from_millis(40));
         }
         let epochs = server.join().unwrap().unwrap();
+        assert_eq!(epochs, 1);
+        let tracks = collected.lock().unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert!((tracks[0].x - 2.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn continuous_wss_listen_fuses_after_idle_across_clients() {
+        use std::net::{IpAddr, Ipv4Addr};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+        use std::time::Duration;
+
+        use rcgen::{CertificateParams, KeyPair, SanType};
+        use wifi_radar_core::{write_observation_wss_client, WssClientConfig};
+
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "wifi-radar-fuse-wss-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::new(vec!["localhost".into()]).unwrap();
+        params
+            .subject_alt_names
+            .push(SanType::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        let cert = params.self_signed(&key).unwrap();
+        let cert_path = dir.join("cert.pem");
+        let key_path = dir.join("key.pem");
+        std::fs::write(&cert_path, cert.pem()).unwrap();
+        std::fs::write(&key_path, key.serialize_pem()).unwrap();
+
+        let paths = [
+            fixture("three_node_lab_node_a.json"),
+            fixture("three_node_lab_node_b.json"),
+            fixture("three_node_lab_node_c.json"),
+        ];
+        let batches: Vec<NodeObservation> = paths
+            .iter()
+            .map(|p| load_observation_file(p).unwrap())
+            .collect();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let collected: Arc<Mutex<Vec<FusedTrack>>> = Arc::new(Mutex::new(Vec::new()));
+        let collected_bg = Arc::clone(&collected);
+        let cert_for_server = cert_path.clone();
+        let key_for_server = key_path.clone();
+        let server = thread::spawn(move || {
+            let tls = WssServerConfig::from_pem_files(&cert_for_server, &key_for_server).unwrap();
+            let mut cfg = EpochListenConfig::new(
+                DEFAULT_FUSION_WINDOW_SEC,
+                SolverKind::Multilateration,
+            );
+            cfg.idle = Duration::from_millis(300);
+            cfg.max_epochs = Some(1);
+            listen_fuse_epochs_wss_on(listener, tls, cfg, |tracks| {
+                collected_bg.lock().unwrap().extend(tracks.iter().cloned());
+                Ok(())
+            })
+        });
+        thread::sleep(Duration::from_millis(40));
+        let client = WssClientConfig::from_ca_file(&cert_path).unwrap();
+        for obs in &batches {
+            write_observation_wss_client(&addr.to_string(), "127.0.0.1", &client, obs).unwrap();
+            thread::sleep(Duration::from_millis(40));
+        }
+        let epochs = server.join().unwrap().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(epochs, 1);
         let tracks = collected.lock().unwrap();
         assert_eq!(tracks.len(), 1);

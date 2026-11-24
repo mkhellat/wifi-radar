@@ -10,11 +10,14 @@ use std::path::Path;
 use std::process;
 use std::time::Duration;
 
-use wifi_radar_core::{read_observations_from_ws_server, DEFAULT_FUSION_WINDOW_SEC};
+use wifi_radar_core::{
+    read_observations_from_ws_server, read_observations_from_wss_server, WssServerConfig,
+    DEFAULT_FUSION_WINDOW_SEC,
+};
 use wifi_radar_fuse::{
-    fuse_batches, listen_fuse_epochs_on, listen_fuse_epochs_ws_on, load_observation_files,
-    read_observations_until_eof, tracks_to_ndjson, EpochListenConfig, FusedTrack, SolverKind,
-    DEFAULT_EPOCH_IDLE_MS,
+    fuse_batches, listen_fuse_epochs_on, listen_fuse_epochs_ws_on, listen_fuse_epochs_wss_on,
+    load_observation_files, read_observations_until_eof, tracks_to_ndjson, EpochListenConfig,
+    FusedTrack, SolverKind, DEFAULT_EPOCH_IDLE_MS,
 };
 
 fn usage() -> ! {
@@ -23,6 +26,7 @@ fn usage() -> ! {
            wifi-radar-fuse [--solver centroid|mlat|hybrid|mlat-robust] [--window SEC] FILE...\n\
            wifi-radar-fuse --listen HOST:PORT [--continuous|--oneshot] [--idle-ms MS] ...\n\
            wifi-radar-fuse --listen-ws HOST:PORT [--continuous|--oneshot] [--idle-ms MS] ...\n\
+           wifi-radar-fuse --listen-wss HOST:PORT --tls-cert CERT --tls-key KEY ...\n\
          \n\
          File mode: load NodeObservation JSON files and print fused 2D tracks.\n\
          Listen mode (default continuous): accept many clients; after\n\
@@ -30,6 +34,10 @@ fn usage() -> ! {
          --listen is TCP NDJSON (one JSON object per line).\n\
          --listen-ws is the same NDJSON, one text frame per observation.\n\
          Binary WebSocket frames are rejected. The socket is plaintext.\n\
+         --listen-wss is those same text frames over TLS. --tls-cert and\n\
+         --tls-key are PEM paths. A self-signed certificate is a lab\n\
+         identity; the peer must trust that certificate. Plaintext\n\
+         --listen-ws stays the default.\n\
          --oneshot: accept one client, fuse once, exit.\n\
          Passive best-effort only — not survey-grade localization."
     );
@@ -53,6 +61,9 @@ fn run() -> Result<(), String> {
     let mut window = DEFAULT_FUSION_WINDOW_SEC;
     let mut listen: Option<String> = None;
     let mut listen_ws: Option<String> = None;
+    let mut listen_wss: Option<String> = None;
+    let mut tls_cert: Option<String> = None;
+    let mut tls_key: Option<String> = None;
     let mut oneshot = false;
     let mut continuous = false;
     let mut idle_ms = DEFAULT_EPOCH_IDLE_MS;
@@ -82,6 +93,19 @@ fn run() -> Result<(), String> {
                 let addr = args.get(i).ok_or("--listen-ws needs HOST:PORT")?;
                 listen_ws = Some(addr.clone());
             }
+            "--listen-wss" => {
+                i += 1;
+                let addr = args.get(i).ok_or("--listen-wss needs HOST:PORT")?;
+                listen_wss = Some(addr.clone());
+            }
+            "--tls-cert" => {
+                i += 1;
+                tls_cert = Some(args.get(i).ok_or("--tls-cert needs a PEM path")?.clone());
+            }
+            "--tls-key" => {
+                i += 1;
+                tls_key = Some(args.get(i).ok_or("--tls-key needs a PEM path")?.clone());
+            }
             "--oneshot" => oneshot = true,
             "--continuous" => continuous = true,
             "--idle-ms" => {
@@ -103,16 +127,47 @@ fn run() -> Result<(), String> {
         return Err("use only one of --oneshot or --continuous".into());
     }
 
-    if listen.is_some() && listen_ws.is_some() {
-        return Err("--listen and --listen-ws cannot be combined".into());
+    let listen_count = usize::from(listen.is_some())
+        + usize::from(listen_ws.is_some())
+        + usize::from(listen_wss.is_some());
+    if listen_count > 1 {
+        return Err("--listen, --listen-ws, and --listen-wss cannot be combined".into());
+    }
+    if listen_wss.is_none() && (tls_cert.is_some() || tls_key.is_some()) {
+        return Err("--tls-cert and --tls-key require --listen-wss".into());
     }
     if let Some(addr) = listen {
-        return run_listen(addr, ListenTransport::Tcp, oneshot, window, solver, idle_ms, &files);
+        return run_listen(
+            addr,
+            ListenTransport::Tcp,
+            None,
+            oneshot,
+            window,
+            solver,
+            idle_ms,
+            &files,
+        );
     }
     if let Some(addr) = listen_ws {
         return run_listen(
             addr,
             ListenTransport::WebSocket,
+            None,
+            oneshot,
+            window,
+            solver,
+            idle_ms,
+            &files,
+        );
+    }
+    if let Some(addr) = listen_wss {
+        let cert = tls_cert.ok_or("--listen-wss needs --tls-cert PEM")?;
+        let key = tls_key.ok_or("--listen-wss needs --tls-key PEM")?;
+        let tls = WssServerConfig::from_pem_files(Path::new(&cert), Path::new(&key))?;
+        return run_listen(
+            addr,
+            ListenTransport::WebSocketTls,
+            Some(tls),
             oneshot,
             window,
             solver,
@@ -132,14 +187,17 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
 enum ListenTransport {
     Tcp,
     WebSocket,
+    WebSocketTls,
 }
 
 fn run_listen(
     addr: String,
     transport: ListenTransport,
+    tls: Option<WssServerConfig>,
     oneshot: bool,
     window: f64,
     solver: SolverKind,
@@ -152,13 +210,22 @@ fn run_listen(
             ListenTransport::WebSocket => {
                 "FILE arguments cannot be combined with --listen-ws".into()
             }
+            ListenTransport::WebSocketTls => {
+                "FILE arguments cannot be combined with --listen-wss".into()
+            }
         });
     }
-    if matches!(transport, ListenTransport::WebSocket) && (addr.contains("://") || addr.contains('/'))
+    if matches!(
+        transport,
+        ListenTransport::WebSocket | ListenTransport::WebSocketTls
+    ) && (addr.contains("://") || addr.contains('/'))
     {
-        return Err(
-            "--listen-ws needs HOST:PORT (the client adds plaintext ws://)".into(),
-        );
+        return Err(match transport {
+            ListenTransport::WebSocketTls => {
+                "--listen-wss needs HOST:PORT (the client adds wss://)".into()
+            }
+            _ => "--listen-ws needs HOST:PORT (the client adds plaintext ws://)".into(),
+        });
     }
 
     let listener = TcpListener::bind(&addr).map_err(|e| format!("bind {addr}: {e}"))?;
@@ -172,12 +239,21 @@ fn run_listen(
             ListenTransport::WebSocket => {
                 eprintln!("wifi-radar-fuse: listening on {local} (websocket, oneshot)");
             }
+            ListenTransport::WebSocketTls => {
+                eprintln!("wifi-radar-fuse: listening on {local} (websocket tls, oneshot)");
+            }
         }
         let (stream, peer) = listener.accept().map_err(|e| e.to_string())?;
         eprintln!("wifi-radar-fuse: accepted {peer}");
         let batches = match transport {
             ListenTransport::Tcp => read_observations_until_eof(stream)?,
             ListenTransport::WebSocket => read_observations_from_ws_server(stream)?,
+            ListenTransport::WebSocketTls => {
+                let config = tls
+                    .as_ref()
+                    .ok_or("internal: --listen-wss without a certificate")?;
+                read_observations_from_wss_server(stream, config)?
+            }
         };
         let tracks = fuse_batches(&batches, window, solver);
         let out = tracks_to_ndjson(&tracks)?;
@@ -196,6 +272,11 @@ fn run_listen(
                 "wifi-radar-fuse: continuous listen on {local} (websocket, idle {idle_ms} ms)"
             );
         }
+        ListenTransport::WebSocketTls => {
+            eprintln!(
+                "wifi-radar-fuse: continuous listen on {local} (websocket tls, idle {idle_ms} ms)"
+            );
+        }
     }
     let mut emit = |tracks: &[FusedTrack]| -> Result<(), String> {
         let out = tracks_to_ndjson(tracks)?;
@@ -210,6 +291,10 @@ fn run_listen(
     let epochs = match transport {
         ListenTransport::Tcp => listen_fuse_epochs_on(listener, cfg, &mut emit)?,
         ListenTransport::WebSocket => listen_fuse_epochs_ws_on(listener, cfg, &mut emit)?,
+        ListenTransport::WebSocketTls => {
+            let config = tls.ok_or("internal: --listen-wss without a certificate")?;
+            listen_fuse_epochs_wss_on(listener, config, cfg, &mut emit)?
+        }
     };
     eprintln!("wifi-radar-fuse: stopped after {epochs} epoch(s) ({local})");
     Ok(())
