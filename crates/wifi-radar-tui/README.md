@@ -11,7 +11,7 @@ cargo run -p wifi-radar-tui -- --demo
 # Live scan: prefer nl80211 GET_SCAN dump, fall back to iw-cli
 cargo run -p wifi-radar-tui -- -i wlan0
 
-# Same, as root, then press m for passive airodump-ng + optional tshark
+# Same, as root, then press m for background airodump-ng + optional tshark
 sudo cargo run -p wifi-radar-tui -- -i wlan0
 
 # Fused-track viewer (best-effort 2D — not survey-grade)
@@ -44,10 +44,15 @@ falls back to `iw-cli`. Status line shows which backend won.
 
 `m` / `:monitor` turns on a passive sample on `{iface}mon`: a short
 `airodump-ng` CSV capture, then `tshark` probe requests when `tshark` is
-installed. That needs root. Without root the status line says so and the
-scan stays on nl80211 / iw. Turning it off or quitting deletes the VIF
-when this process created it. Capture is receive-only (no injection,
-deauth, or association). Distance remains an RSSI estimate.
+installed. That needs root. The sample runs on a background thread, so
+the polar view keeps drawing and keys keep working. The header shows
+`mon=sampling` while a capture is in flight. A later scan does not start
+another sample until that one finishes. Without root the status line says
+so and the scan stays on nl80211 / iw; nothing is spawned. Turning monitor
+off or quitting deletes the VIF when this process created it and drops a
+sample that finishes afterwards. Capture is receive-only (no injection,
+deauth, or association). Distance remains an RSSI estimate. nl80211 / `iw`
+still run on the UI thread.
 
 The UI shows a **polar canvas** (rings, sweep, device glyphs) above the
 device table. Selection is by MAC (stable across RSSI re-sorts).
