@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Decode nl80211 nested `NL80211_ATTR_BSS` attributes into [`WifiDevice`].
 //!
 //! Pure parsing — no netlink socket. Live dump/trigger lands in a follow-up.

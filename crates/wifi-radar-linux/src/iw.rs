@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Interim `iw` CLI scan backend (parity with Python `scan/iw.py`).
 //!
 //! Native nl80211 will replace this as the default Linux path.

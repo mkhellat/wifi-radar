@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Small subprocess helpers shared by the monitor-mode code.
 //!
 //! `std::process::Command::output` has no timeout, and a wedged `iw` or

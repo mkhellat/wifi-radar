@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Native nl80211 scan backend (genetlink TRIGGER_SCAN + GET_SCAN dump).
 //!
 //! Passive observation only — no injection / deauth. After a successful
