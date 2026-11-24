@@ -122,3 +122,21 @@ Keep the PR scoped to one coherent theme (e.g. “nl80211 scan MVP”, not
 
 Prefer merge or rebase onto ``main`` so atomic commits stay visible; do
 not squash a stack that was authored as separate reviewable steps.
+
+License
+-------
+
+The SPDX identifier for this project is ``GPL-3.0-or-later``.
+The canonical text is ``LICENSES/GPL-3.0-or-later.txt``. The root
+``LICENSE`` file is the same GPLv3 document, so a forge that only
+scans that path still finds a license. ``REUSE.toml`` (closest
+precedence) annotates sources, docs, crates, tests, and build files.
+Rust files under ``crates/`` and Python modules under
+``src/wifi_radar`` repeat the grant in SPDX headers.
+
+GitHub's license API reports ``GPL-3.0`` for that GPLv3 document.
+It may keep doing so. Cargo, ``pyproject.toml``, and ``reuse lint``
+are the identifiers to trust. Check with::
+
+   reuse lint
+   gh api repos/mkhellat/wifi-radar --jq .license.spdx_id
