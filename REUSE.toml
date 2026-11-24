@@ -1,0 +1,27 @@
+# wifi-radar is GPL-3.0-or-later. The canonical text is
+# LICENSES/GPL-3.0-or-later.txt. Root LICENSE is that same document
+# so a host that only scans the root file still finds the GPLv3 body.
+# Precedence is closest: an SPDX header in a file replaces this table.
+
+version = 1
+
+[[annotations]]
+path = [
+  "crates/**",
+  "src/**",
+  "tests/**",
+  "docs/**",
+  "prototype_v0.py",
+  "README.md",
+  "CHANGELOG.md",
+  "Cargo.toml",
+  "Cargo.lock",
+  "pyproject.toml",
+  "Makefile.in",
+  "configure",
+  ".github/**",
+  ".gitignore",
+]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 wifi-radar contributors"
+SPDX-License-Identifier = "GPL-3.0-or-later"
