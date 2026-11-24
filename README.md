@@ -172,4 +172,13 @@ Only use on networks and airspace you are authorised to monitor. Passive scannin
 
 ## License
 
-[GPL-3.0-or-later](LICENSE)
+The SPDX identifier is `GPL-3.0-or-later`. The text is
+[LICENSES/GPL-3.0-or-later.txt](LICENSES/GPL-3.0-or-later.txt).
+The root [LICENSE](LICENSE) file is that same GPLv3 document, so a
+host that only reads the root file still finds it. `REUSE.toml`
+annotates the tree. Rust sources under `crates/` and Python modules
+under `src/wifi_radar` also carry SPDX headers.
+
+GitHub's license API matches that GPLv3 document as `GPL-3.0` and
+may keep reporting that identifier. Trust the SPDX identifier in
+Cargo, pyproject, and REUSE.
