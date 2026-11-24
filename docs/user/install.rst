@@ -92,8 +92,13 @@ During the hybrid migration you can also try:
 nl80211 GET_SCAN dump and falls back to ``iw`` if genetlink fails.
 Press ``m`` (or ``:monitor``) as root for a passive ``airodump-ng``
 sample plus ``tshark`` probe requests when ``tshark`` is installed.
-Without root the scan stays on nl80211 / ``iw``. The sample does not
-inject, deauthenticate, or associate.
+The sample runs on a background thread: the polar view keeps drawing,
+and the header shows ``mon=sampling`` until that capture finishes.
+A later scan does not start a second sample while one is still running.
+Without root the scan stays on nl80211 / ``iw`` and no capture thread
+is started. Turning monitor off or quitting drops a sample that
+finishes afterwards. The sample does not inject, deauthenticate, or
+associate. nl80211 / ``iw`` still run on the UI thread.
 
 .. code-block:: bash
 
