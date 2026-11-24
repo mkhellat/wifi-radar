@@ -80,9 +80,49 @@ pub fn publish_observation(addr: &str, obs: &NodeObservation) -> Result<(), Stri
 ///
 /// `addr` is `HOST:PORT`. The frame is the same NDJSON line as
 /// [`publish_observation`]. The socket is plaintext `ws://` and is closed
-/// after the frame so the aggregator can finish the batch.
+/// after the frame so the aggregator can finish the batch. TLS is
+/// [`publish_observation_wss`].
 pub fn publish_observation_ws(addr: &str, obs: &NodeObservation) -> Result<(), String> {
     wifi_radar_core::write_observation_ws_client(addr, obs)
+}
+
+/// Split a `--publish-wss` value into `HOST:PORT` and the TLS server name.
+///
+/// Accepts `HOST:PORT` or `wss://HOST:PORT`. The server name is the host.
+/// It must be a DNS name or an IP address on the peer certificate.
+pub fn parse_publish_wss_target(raw: &str) -> Result<(String, String), String> {
+    let rest = raw.strip_prefix("wss://").unwrap_or(raw);
+    if rest.is_empty() || rest.contains("://") || rest.contains('/') {
+        return Err(format!(
+            "--publish-wss needs HOST:PORT or wss://HOST:PORT (got {raw})"
+        ));
+    }
+    let Some((host, port)) = rest.rsplit_once(':') else {
+        return Err(format!(
+            "--publish-wss needs HOST:PORT or wss://HOST:PORT (got {raw})"
+        ));
+    };
+    if host.is_empty() || port.is_empty() {
+        return Err(format!(
+            "--publish-wss needs HOST:PORT or wss://HOST:PORT (got {raw})"
+        ));
+    }
+    Ok((format!("{host}:{port}"), host.to_string()))
+}
+
+/// Connect to a fuse `--listen-wss` peer and send one observation as a text frame.
+///
+/// `addr` is `HOST:PORT`. `server_name` is checked against the certificate.
+/// `tls` trusts the lab CA, which may be the server's own self-signed
+/// certificate. The frame is the same NDJSON text frame as
+/// [`publish_observation_ws`]. The socket closes after the frame.
+pub fn publish_observation_wss(
+    addr: &str,
+    server_name: &str,
+    tls: &wifi_radar_core::WssClientConfig,
+    obs: &NodeObservation,
+) -> Result<(), String> {
+    wifi_radar_core::write_observation_wss_client(addr, server_name, tls, obs)
 }
 
 /// Settings for a repeated scan / publish loop.
@@ -285,5 +325,67 @@ mod tests {
         let got = collected.lock().unwrap();
         assert_eq!(got.len(), 2);
         assert!(got.iter().all(|o| o.node_id == "node-ws-loop"));
+    }
+
+    #[test]
+    fn parse_publish_wss_accepts_host_port_and_url() {
+        let (addr, name) = parse_publish_wss_target("127.0.0.1:9801").unwrap();
+        assert_eq!(addr, "127.0.0.1:9801");
+        assert_eq!(name, "127.0.0.1");
+        let (addr, name) = parse_publish_wss_target("wss://lab.example:443").unwrap();
+        assert_eq!(addr, "lab.example:443");
+        assert_eq!(name, "lab.example");
+        assert!(parse_publish_wss_target("wss://127.0.0.1:9/obs").is_err());
+        assert!(parse_publish_wss_target("ws://127.0.0.1:9").is_err());
+        assert!(parse_publish_wss_target("127.0.0.1").is_err());
+    }
+
+    #[test]
+    fn publish_observation_wss_reaches_listener() {
+        use std::net::{IpAddr, Ipv4Addr, TcpListener};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::thread;
+        use std::time::Duration;
+
+        use rcgen::{CertificateParams, KeyPair, SanType};
+        use wifi_radar_core::{read_observations_from_wss_server, WssClientConfig, WssServerConfig};
+
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "wifi-radar-node-wss-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::new(vec!["localhost".into()]).unwrap();
+        params
+            .subject_alt_names
+            .push(SanType::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        let cert = params.self_signed(&key).unwrap();
+        let cert_path = dir.join("cert.pem");
+        let key_path = dir.join("key.pem");
+        std::fs::write(&cert_path, cert.pem()).unwrap();
+        std::fs::write(&key_path, key.serialize_pem()).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let cert_for_server = cert_path.clone();
+        let key_for_server = key_path.clone();
+        let server = thread::spawn(move || {
+            let config = WssServerConfig::from_pem_files(&cert_for_server, &key_for_server).unwrap();
+            let (stream, _) = listener.accept().unwrap();
+            read_observations_from_wss_server(stream, &config).unwrap()
+        });
+        thread::sleep(Duration::from_millis(20));
+        let client = WssClientConfig::from_ca_file(&cert_path).unwrap();
+        let cfg = NodeConfig::new("node-wss", NodePose::new(1.0, 2.0, 1.0, 90.0));
+        let obs = observation_from_devices(&cfg, &demo_devices(), Instant::now());
+        publish_observation_wss(&addr.to_string(), "127.0.0.1", &client, &obs).unwrap();
+        let got = server.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].node_id, "node-wss");
+        assert_eq!(got[0].device_observations.len(), 3);
     }
 }
