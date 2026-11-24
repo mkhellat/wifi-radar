@@ -1315,6 +1315,7 @@ dependencies = [
 name = "wifi-radar-fuse"
 version = "0.1.0"
 dependencies = [
+ "rcgen",
  "serde",
  "serde_json",
  "wifi-radar-core",

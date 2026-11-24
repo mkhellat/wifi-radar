@@ -18,3 +18,5 @@ serde_json = "1.0.154"
 
 [dev-dependencies]
 wifi-radar-core = { workspace = true }
+# 0.14.8+ needs rustc 1.88, above the workspace MSRV of 1.75.
+rcgen = "=0.14.7"
