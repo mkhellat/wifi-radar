@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Help overlay text (Python `_build_help_lines` parity).
 
 use wifi_radar_core::CalibrationMode;

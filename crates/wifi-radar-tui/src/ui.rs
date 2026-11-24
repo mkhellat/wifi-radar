@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Ratatui drawing: polar canvas + device list + status.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};

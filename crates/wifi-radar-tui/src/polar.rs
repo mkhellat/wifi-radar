@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 wifi-radar contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Polar radar geometry (parity with Python `ui/radar.py`).
 //!
 //! Pure mapping helpers plus a Ratatui buffer painter. Heading keys and
